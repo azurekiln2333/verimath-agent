@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+DEFAULT_CORPUS_PATHS = (
+    r"E:\windows_ext\Desktop\个人\学习\概率论",
+    r"E:\windows_ext\Desktop\个人\学习\数分高代",
+)
+
+
+def load_local_env(path: Path = Path(".env")) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    fallback = "true" if default else "false"
+    return os.getenv(name, fallback).lower() in {"1", "true", "yes", "on"}
+
+
+def _split_paths(value: str | None) -> list[Path]:
+    if not value:
+        return [Path(path) for path in DEFAULT_CORPUS_PATHS]
+    return [Path(part.strip()) for part in value.split(";") if part.strip()]
+
+
+load_local_env()
+
+
+@dataclass(frozen=True)
+class Settings:
+    app_name: str = "xiaoyi-a2a-stat-tutor"
+    app_version: str = "0.1.0"
+    data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", ".data")))
+    corpus_paths: tuple[Path, ...] = field(
+        default_factory=lambda: tuple(_split_paths(os.getenv("CORPUS_WHITELIST")))
+    )
+    enforce_signature: bool = field(default_factory=lambda: _env_bool("A2A_ENFORCE_SIGNATURE"))
+    access_key: str = field(default_factory=lambda: os.getenv("A2A_ACCESS_KEY", ""))
+    secret_key: str = field(default_factory=lambda: os.getenv("A2A_SECRET_KEY", ""))
+    signature_window_seconds: int = field(
+        default_factory=lambda: int(os.getenv("A2A_SIGNATURE_WINDOW_SECONDS", "900"))
+    )
+    model_api_base: str = field(
+        default_factory=lambda: os.getenv("MODEL_API_BASE", "https://api.deepseek.com")
+    )
+    model_api_key: str = field(
+        default_factory=lambda: os.getenv("MODEL_API_KEY", os.getenv("DEEPSEEK_API_KEY", ""))
+    )
+    model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "deepseek-v4-flash"))
+    model_enabled: bool = field(default_factory=lambda: _env_bool("MODEL_ENABLED"))
+    max_history_turns: int = field(default_factory=lambda: int(os.getenv("MAX_HISTORY_TURNS", "8")))
+    retrieval_limit: int = field(default_factory=lambda: int(os.getenv("RETRIEVAL_LIMIT", "4")))
+
+    @property
+    def sqlite_path(self) -> Path:
+        return self.data_dir / "a2a.sqlite"
+
+    @property
+    def trace_sqlite_path(self) -> Path:
+        return self.data_dir / "trace.sqlite"
+
+
+settings = Settings()

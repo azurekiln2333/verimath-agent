@@ -1,0 +1,18 @@
+.data/
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# 调试/临时产物（截图、日志、下载解压的前端依赖包等）
+.tmp_*
+*.log
+
+
+debug_*.html
