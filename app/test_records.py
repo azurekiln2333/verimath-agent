@@ -73,10 +73,11 @@ class TestRecordStore:
         *,
         input_path: str,
         limit: int | None,
+        kind: str = "offline_eval",
     ) -> dict[str, Any]:
         record = {
             "created_at": time.time(),
-            "kind": "offline_eval",
+            "kind": kind,
             "input_path": input_path,
             "limit": limit,
             "report": report,
@@ -90,14 +91,23 @@ class TestRecordStore:
             )
         return record
 
-    def recent_eval_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recent_eval_runs(
+        self, limit: int = 20, kind: str | None = None
+    ) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 100))
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT created_at, kind, input_path, limit_n, report_json"
-                " FROM eval_runs ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            if kind is None:
+                rows = conn.execute(
+                    "SELECT created_at, kind, input_path, limit_n, report_json"
+                    " FROM eval_runs ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT created_at, kind, input_path, limit_n, report_json"
+                    " FROM eval_runs WHERE kind = ? ORDER BY id DESC LIMIT ?",
+                    (kind, limit),
+                ).fetchall()
         return [
             {
                 "created_at": row["created_at"],
