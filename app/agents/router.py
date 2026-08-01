@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.agents.guard import ContentGuard
+from app.artifacts.planner import plan_artifact
 from app.skills.method_selector import extract_features, recommend_method, render_recommendation
 from app.skills.exercise import generate_exercise, render_exercise
 
@@ -15,6 +16,9 @@ class AgentResponse:
     requires_clarification: bool = False
     sources: list[dict[str, Any]] = field(default_factory=list)
     flags: dict[str, Any] = field(default_factory=dict)
+    # 可视化件。空列表表示这次回答不配图 —— 这是合法且常见的情况，
+    # 前端必须能优雅处理（纯文字回答依然完整可用）。
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TutorRouter:
@@ -32,12 +36,36 @@ class TutorRouter:
             )
         route = self.route(query)
         if route == "method_selection":
-            return self._method_selection(query, retrieved)
-        if route == "learning_path":
-            return self._learning_path(query, retrieved)
-        if route == "exercise":
-            return self._exercise(query, retrieved)
-        return self._concept(query, retrieved)
+            response = self._method_selection(query, retrieved)
+        elif route == "learning_path":
+            response = self._learning_path(query, retrieved)
+        elif route == "exercise":
+            response = self._exercise(query, retrieved)
+        else:
+            response = self._concept(query, retrieved)
+        return self._attach_artifact(query, response)
+
+    def _attach_artifact(self, query: str, response: AgentResponse) -> AgentResponse:
+        """给回答挂上确定性选出的可视化件。
+
+        任何失败都必须静默降级为纯文字 —— 配图是增强，不是回答的前提。
+        文字答案已经完整，绝不能因为画图出错而丢掉它。
+        """
+        try:
+            plan = plan_artifact(query, response.route)
+        except Exception:
+            return response
+        if not plan.hit or plan.spec is None:
+            return response
+        try:
+            payload = plan.spec.as_dict()
+        except Exception:
+            return response
+        flags = dict(response.flags)
+        flags["artifact_rule"] = plan.matched_rule
+        flags["artifact_kind"] = plan.spec.kind
+        flags["artifact_tier"] = "deterministic"
+        return replace(response, artifacts=[payload], flags=flags)
 
     def route(self, query: str) -> str:
         q = query.lower()

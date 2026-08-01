@@ -61,8 +61,20 @@ class Settings:
     )
     model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "deepseek-v4-flash"))
     model_enabled: bool = field(default_factory=lambda: _env_bool("MODEL_ENABLED"))
+    # DeepSeek 思考模式：默认开启。reasoning_content 与 content 同级返回，
+    # 工具调用轮次需把 reasoning_content 回传给 API（否则 400）。
+    model_thinking: bool = field(default_factory=lambda: _env_bool("MODEL_THINKING", default=True))
+    # 思考强度：high（普通默认）/ max（复杂 agent 请求）。low/medium 映射为 high。
+    model_reasoning_effort: str = field(
+        default_factory=lambda: os.getenv("MODEL_REASONING_EFFORT", "high")
+    )
     max_history_turns: int = field(default_factory=lambda: int(os.getenv("MAX_HISTORY_TURNS", "8")))
     retrieval_limit: int = field(default_factory=lambda: int(os.getenv("RETRIEVAL_LIMIT", "4")))
+    # 多轮上下文拼装进模型时的 token 预算（字符数近似，不引 tiktoken）。
+    # 与 max_history_turns 配合：轮数先截断，再按 token 预算二次裁剪，避免长对话超模型窗口。
+    context_token_budget: int = field(
+        default_factory=lambda: int(os.getenv("CONTEXT_TOKEN_BUDGET", "4000"))
+    )
 
     @property
     def sqlite_path(self) -> Path:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -86,6 +87,9 @@ DOC_TYPE_WEIGHTS = {
 CORPUS_CHUNK_COLUMNS = {
     "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
     "text": "TEXT NOT NULL",
+    # 文本内容 SHA1 前 16 位，用于增量入库去重（见 add_chunks）。
+    # 建索引后去重为 O(K log N) 定向查询，避免每次加载全表文本重算哈希。
+    "text_hash": "TEXT NOT NULL DEFAULT ''",
     "doc_id": "TEXT NOT NULL DEFAULT ''",
     "title": "TEXT NOT NULL DEFAULT ''",
     "course": "TEXT NOT NULL DEFAULT 'unknown'",
@@ -140,12 +144,17 @@ class KeywordRetriever:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_topic ON corpus_chunks(topic)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_doc_type ON corpus_chunks(doc_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_ingest_policy ON corpus_chunks(ingest_policy)")
+            # text_hash 索引：支撑 add_chunks 的定向去重查询，以及存量回填的快速判空
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_text_hash ON corpus_chunks(text_hash)")
+            # 一次性回填：老库升级到含 text_hash 列后，给空哈希行补算（索引让「无空行」时即时返回）
+            _backfill_text_hashes(conn)
 
     def replace_chunks(self, chunks: Iterable[RawDocument]) -> int:
         self.init_db()
         rows = [
             (
                 chunk.text,
+                _text_hash(chunk.text),
                 chunk.metadata.get("doc_id", ""),
                 chunk.metadata.get("title", chunk.metadata.get("topic", "unknown")),
                 chunk.metadata.get("course", "unknown"),
@@ -169,10 +178,76 @@ class KeywordRetriever:
             conn.executemany(
                 """
                 INSERT INTO corpus_chunks (
-                    text, doc_id, title, course, chapter, topic, doc_type, language,
+                    text, text_hash, doc_id, title, course, chapter, topic, doc_type, language,
                     provenance, source, origin_path, source_url, license_status,
                     ingest_policy, quality_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def add_chunks(self, chunks: Iterable[RawDocument]) -> int:
+        """增量入库：直接 INSERT，不动现有数据（区别于 replace_chunks 的全量替换）。
+
+        供「更新笔记」用：用户把自己的笔记分块后追加进库，后续检索优先命中
+        doc_type=self_note（score_row 给 self_note 最高权重）。按文本哈希去重，
+        避免同一段笔记重复提交导致检索结果扎堆。
+
+        去重用 text_hash 列 + 索引定向查询：只对本批哈希做 IN 查询（O(K log N)），
+        不再一次性加载全表文本重算哈希（旧实现的 O(N) 内存/性能风险）。
+        """
+        self.init_db()
+
+        # 先按文本哈希对本批去重（同一次提交里的重复段落只留一份）
+        candidates: list[tuple] = []   # (text, hash, ...metadata)
+        seen_hashes: set[str] = set()
+        for chunk in chunks:
+            text = chunk.text.strip()
+            if not text:
+                continue
+            h = _text_hash(text)
+            if h in seen_hashes:
+                continue
+            seen_hashes.add(h)
+            candidates.append(
+                (
+                    text,
+                    h,
+                    chunk.metadata.get("doc_id", ""),
+                    chunk.metadata.get("title", chunk.metadata.get("topic", "unknown")),
+                    chunk.metadata.get("course", "unknown"),
+                    chunk.metadata.get("chapter", "unknown"),
+                    chunk.metadata.get("topic", "unknown"),
+                    chunk.metadata.get("doc_type", "self_note"),
+                    chunk.metadata.get("language", "zh"),
+                    chunk.metadata.get("provenance", "self"),
+                    chunk.metadata.get("source", chunk.source),
+                    chunk.metadata.get("origin_path", chunk.source),
+                    chunk.metadata.get("source_url", ""),
+                    chunk.metadata.get("license_status", "unknown"),
+                    chunk.metadata.get("ingest_policy", "main"),
+                    _coerce_float(chunk.metadata.get("quality_score"), default=0.0),
+                )
+            )
+        if not candidates:
+            return 0
+
+        # 定向查询本批哈希里已存在于库的（索引命中，分批 IN 避免 SQL 变量数超限）
+        with self._connect() as conn:
+            existing_hashes = _existing_text_hashes(conn, seen_hashes)
+        rows = [c for c in candidates if c[1] not in existing_hashes]
+        if not rows:
+            return 0
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO corpus_chunks (
+                    text, text_hash, doc_id, title, course, chapter, topic, doc_type, language,
+                    provenance, source, origin_path, source_url, license_status,
+                    ingest_policy, quality_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -441,3 +516,49 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         if name == "id" or name in existing:
             continue
         conn.execute(f"ALTER TABLE corpus_chunks ADD COLUMN {name} {definition}")
+
+
+def _text_hash(text: str) -> str:
+    """文本内容 SHA1 前 16 位，用于增量入库去重。"""
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _existing_text_hashes(conn: sqlite3.Connection, hashes: Iterable[str]) -> set[str]:
+    """返回 hashes 中已存在于 corpus_chunks 的子集。
+
+    用 text_hash 索引做定向 IN 查询（O(K log N)，K=本批哈希数），替代旧实现
+    一次性加载全表文本重算哈希。分批避免 SQL 变量数超限（SQLite 默认上限 999，
+    新版本 32766；按 500 分批保守取值）。
+    """
+    batch = [h for h in hashes if h]
+    if not batch:
+        return set()
+    found: set[str] = set()
+    chunk_size = 500
+    for i in range(0, len(batch), chunk_size):
+        part = batch[i:i + chunk_size]
+        placeholders = ",".join("?" * len(part))
+        for row in conn.execute(
+            f"SELECT text_hash FROM corpus_chunks WHERE text_hash IN ({placeholders})",
+            tuple(part),
+        ):
+            found.add(row[0])
+    return found
+
+
+def _backfill_text_hashes(conn: sqlite3.Connection) -> None:
+    """老库升级迁移：给 text_hash 为空的存量行补算哈希。
+
+    索引让「无空行」时的 LIMIT 查询即时返回，迁移完成后本函数近似 no-op。
+    LIMIT 1000 + 增量 UPDATE：超大库分多次 init_db 调用逐步迁移完。
+    """
+    rows = conn.execute(
+        "SELECT id, text FROM corpus_chunks WHERE text_hash = '' LIMIT 1000"
+    ).fetchall()
+    if not rows:
+        return
+    for cid, text in rows:
+        conn.execute(
+            "UPDATE corpus_chunks SET text_hash = ? WHERE id = ?",
+            (_text_hash(text or ""), cid),
+        )
