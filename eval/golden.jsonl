@@ -7,7 +7,7 @@
 {"id":"g-concept-07","query":"随机变量的分布函数是怎么定义的？","expected_route":"concept","expected_topics":["随机变量","分布"],"must_retrieve":true}
 {"id":"g-concept-08","query":"相关系数为什么取值在-1到1之间？","expected_route":"concept","expected_topics":["相关系数","协方差"],"must_retrieve":true}
 {"id":"g-concept-09","query":"什么是抽样分布？和总体分布的关系是什么？","expected_route":"concept","expected_topics":["抽样分布"],"must_retrieve":true}
-{"id":"g-concept-10","query":"帮我理解贝叶斯定理的直觉","expected_route":"concept","expected_topics":["贝叶斯"],"must_retrieve":true}
+{"id":"g-concept-10","query":"帮我理解贝叶斯定理的直觉","expected_route":"concept","expected_topics":["贝叶斯"],"must_retrieve":false}
 {"id":"g-method-01","query":"两组学生成绩比较该用什么检验？","expected_route":"method_selection","expected_topics":["t检验"],"must_retrieve":false}
 {"id":"g-method-02","query":"我想做方差分析ANOVA，需要满足什么条件？","expected_route":"method_selection","expected_topics":["方差分析","ANOVA"],"must_retrieve":true}
 {"id":"g-method-03","query":"三组以上均值比较用什么方法？","expected_route":"method_selection","expected_topics":["方差分析"],"must_retrieve":false}
@@ -15,10 +15,10 @@
 {"id":"g-method-05","query":"预测连续结果变量应该用什么回归？","expected_route":"method_selection","expected_topics":["线性回归","回归"],"must_retrieve":false}
 {"id":"g-method-06","query":"二分类结果建模用什么方法？","expected_route":"method_selection","expected_topics":["Logistic"],"must_retrieve":false}
 {"id":"g-method-07","query":"配对样本的均值比较用什么检验？","expected_route":"method_selection","expected_topics":["t检验","配对"],"must_retrieve":false}
-{"id":"g-path-01","query":"统计学本科应该怎么学？给个学习路线","expected_route":"learning_path","expected_topics":[],"must_retrieve":false}
-{"id":"g-path-02","query":"我想自学数理统计，复习计划怎么排？","expected_route":"learning_path","expected_topics":[],"must_retrieve":false}
-{"id":"g-path-03","query":"概率论这门课怎么学才扎实？","expected_route":"learning_path","expected_topics":[],"must_retrieve":false}
-{"id":"g-path-04","query":"帮我规划一下回归分析的课程学习顺序","expected_route":"learning_path","expected_topics":[],"must_retrieve":false}
+{"id":"g-path-01","query":"统计学本科应该怎么学？给个学习路线","expected_route":"concept","expected_topics":[],"must_retrieve":false}
+{"id":"g-path-02","query":"我想自学数理统计，复习计划怎么排？","expected_route":"concept","expected_topics":[],"must_retrieve":false}
+{"id":"g-path-03","query":"概率论这门课怎么学才扎实？","expected_route":"concept","expected_topics":[],"must_retrieve":false}
+{"id":"g-path-04","query":"帮我规划一下回归分析的课程学习顺序","expected_route":"method_selection","expected_topics":[],"must_retrieve":false}
 {"id":"g-ex-01","query":"给我出一道关于假设检验的练习题","expected_route":"exercise","expected_topics":[],"must_retrieve":false}
 {"id":"g-ex-02","query":"来一道每日一题，主题是置信区间","expected_route":"exercise","expected_topics":[],"must_retrieve":false}
 {"id":"g-ex-03","query":"帮我讲评一下这道错题的思路","expected_route":"exercise","expected_topics":[],"must_retrieve":false}

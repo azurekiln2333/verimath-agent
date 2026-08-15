@@ -7,6 +7,9 @@ from app.agents.guard import ContentGuard
 from app.artifacts.planner import plan_artifact
 from app.skills.method_selector import extract_features, recommend_method, render_recommendation
 from app.skills.exercise import generate_exercise, render_exercise
+from app.skills.registry import route_for_query
+from app.skills.solution_writer import SOLUTION_GUIDE, parse_matrix_literals, try_offline_solution
+from app.skills.courseware import generate_courseware, render_courseware_md
 
 
 @dataclass(frozen=True)
@@ -37,10 +40,12 @@ class TutorRouter:
         route = self.route(query)
         if route == "method_selection":
             response = self._method_selection(query, retrieved)
-        elif route == "learning_path":
-            response = self._learning_path(query, retrieved)
         elif route == "exercise":
             response = self._exercise(query, retrieved)
+        elif route == "solution":
+            response = self._solution(query, retrieved)
+        elif route == "courseware":
+            response = self._courseware(query, retrieved)
         else:
             response = self._concept(query, retrieved)
         return self._attach_artifact(query, response)
@@ -68,17 +73,47 @@ class TutorRouter:
         return replace(response, artifacts=[payload], flags=flags)
 
     def route(self, query: str) -> str:
+        """manifest 驱动：skills 注册表关键词优先（产物意图技能在前），
+        未命中走内置兜底（method_selection/exercise 的历史关键词，
+        保留是为 manifest 漏词时的安全网）。"""
         q = query.lower()
-        if any(k in q for k in ("学习路线", "怎么学", "复习计划", "课程规划", "自学")):
-            return "learning_path"
+        skill_route = route_for_query(query)
+        if skill_route:
+            return skill_route
+        # 有矩阵字面量但没命中任何词（如「求 [[4,7],[2,6]] 的逆」）：
+        # 矩阵在场的 query 几乎必然是线代求解，交给 solution 骨架
+        # （其内部会再判断能否离线直答）。
+        if parse_matrix_literals(query):
+            return "solution"
         if any(k in q for k in ("t检验", "anova", "方差分析", "回归", "logistic", "卡方", "bootstrap",
-                                 "假设检验", "统计方法", "用什么检验", "用什么方法", "选什么检验",
-                                 "均值比较", "成绩比较", "组比较", "比例比较", "两组比较", "组间比较",
-                                 "该用什么", "独立性检验", "相关分析")):
+                                  "假设检验", "统计方法", "用什么检验", "用什么方法", "选什么检验",
+                                  "均值比较", "成绩比较", "组比较", "比例比较", "两组比较", "组间比较",
+                                  "该用什么", "独立性检验", "相关分析")):
             return "method_selection"
         if any(k in q for k in ("出题", "练习", "每日一题", "讲评", "错题", "组卷")):
             return "exercise"
         return "concept"
+
+    def _solution(self, query: str, sources: list[dict[str, Any]]) -> AgentResponse:
+        """逐步解答：题面带矩阵字面量时离线内核直答；否则给引导骨架，
+        模型开启后由 agent loop 解析题目并调 linalg_step_solve。"""
+        offline = try_offline_solution(query)
+        text = offline or SOLUTION_GUIDE
+        return AgentResponse(
+            route="solution",
+            sources=sources,
+            text=text,
+            flags={"offline_kernel": offline is not None},
+        )
+
+    def _courseware(self, query: str, sources: list[dict[str, Any]]) -> AgentResponse:
+        cw = generate_courseware(query)
+        return AgentResponse(
+            route="courseware",
+            sources=sources,
+            text=render_courseware_md(cw),
+            flags={"courseware_source": "template"},
+        )
 
     def _method_selection(self, query: str, sources: list[dict[str, Any]]) -> AgentResponse:
         rec = recommend_method(extract_features(query))
@@ -90,22 +125,6 @@ class TutorRouter:
             text=text,
             flags={"needs_design_info": not rec.confident,
                    "recommended_method": rec.primary if rec.confident else ""},
-        )
-
-    def _learning_path(self, query: str, sources: list[dict[str, Any]]) -> AgentResponse:
-        return AgentResponse(
-            route="learning_path",
-            sources=sources,
-            text=(
-                "结论先行：统计本科核心学习路线建议按“概率基础 -> 数理统计 -> 回归建模 -> 计算实现 -> 专题应用”推进。\n\n"
-                "1. 概率论：随机变量、分布、期望方差、大数定律、中心极限定理。\n"
-                "2. 数理统计：抽样分布、估计、置信区间、假设检验、似然思想。\n"
-                "3. 回归与方差分析：线性模型、诊断、ANOVA、Logistic 回归。\n"
-                "4. 统计计算：Python/R 数据清洗、可视化、Bootstrap、交叉验证。\n"
-                "5. 专题扩展：时间序列、贝叶斯、生存分析、因果推断。\n\n"
-                "学习方法：每章固定做三件事：概念卡片、典型题、真实数据小实验。\n\n"
-                "下一步练习：告诉我你的年级、已学课程和薄弱点，我给你排 4 周计划。"
-            ),
         )
 
     def _concept(self, query: str, sources: list[dict[str, Any]]) -> AgentResponse:

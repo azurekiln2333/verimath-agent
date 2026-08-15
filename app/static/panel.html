@@ -1,0 +1,396 @@
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VeriMath Agent · 数学与统计学习导师</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/static/vendor/katex.min.css" />
+  <link rel="stylesheet" href="/static/vendor/fonts/fonts.css" />
+  <!-- 图标改为内联 SVG（icons.js，同步加载确保内联脚本可用），主题字体本地托管 -->
+  <script src="/static/icons.js"></script>
+  <script defer src="/static/vendor/markdown-it.min.js"></script>
+  <script defer src="/static/vendor/purify.min.js"></script>
+  <script defer src="/static/vendor/katex.min.js"></script>
+  <script defer src="/static/vendor/auto-render.min.js"></script>
+  <!-- 可视化件：statlib 必须先加载（plot 与 widgets 都依赖它） -->
+  <script defer src="/static/statlib.js"></script>
+  <script defer src="/static/plot.js"></script>
+  <script defer src="/static/widgets.js"></script>
+  <link rel="stylesheet" href="/static/panel.css" />
+</head>
+<body data-mode="user">
+  <canvas id="glcanvas"></canvas>
+
+  <!-- 左栏：fixed w-72，导航 + 可切换功能分区 + Developer Mode 卡片 -->
+  <aside class="side">
+    <div class="drawer-head">
+      <b>侧栏</b>
+      <button id="drawerClose" type="button" title="收起" aria-label="收起侧栏"><span data-icon="close" data-icon-size="18"></span></button>
+    </div>
+
+    <div class="brand">
+      <div class="logo">V</div>
+      <div>
+        <h1>VeriMath</h1>
+        <span class="brand-subtitle">数理统计学习工作区</span>
+      </div>
+    </div>
+
+    <nav class="nav" role="navigation" aria-label="主导航">
+      <button type="button" class="nav-item active" data-nav="manuscripts"><span data-icon="menu_book"></span><span data-i18n="nav.conversation">对话</span></button>
+      <button type="button" class="nav-item" data-nav="computations"><span data-icon="function"></span><span data-i18n="nav.computation">计算</span></button>
+      <button type="button" class="nav-item" data-nav="archives"><span data-icon="inventory_2"></span><span data-i18n="nav.archives">归档</span></button>
+      <button type="button" class="nav-item" data-nav="settings"><span data-icon="settings_suggest"></span><span data-i18n="nav.settings">设置</span></button>
+    </nav>
+
+    <div class="nav-panels">
+      <!-- 对话：快捷指令 + 对话上下文 -->
+      <div class="nav-panel active" data-nav-panel="manuscripts">
+        <div class="section">
+          <h2><span data-icon="bolt"></span>快捷指令</h2>
+          <div class="quick-list">
+            <button class="quick" data-q="给我制定一个四周的数理统计学习路线">制定学习路线</button>
+            <button class="quick" data-q="两组成绩比较应该用什么统计方法？">统计方法选择</button>
+            <button class="quick" data-q="什么是正态分布">正态分布可视化</button>
+            <button class="quick" data-q="中心极限定理是什么？">解释一个概念</button>
+            <button class="quick" data-q="出一道关于 Welch t 检验的原创练习题">出一道练习题</button>
+          </div>
+        </div>
+        <div class="section">
+          <h2><span data-icon="memory"></span>对话上下文</h2>
+          <div id="contextPanel">
+            <div class="subtle">暂无上下文</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 计算：可视化模板 + 语料分布 -->
+      <div class="nav-panel" data-nav-panel="computations" hidden>
+        <div class="section">
+          <h2><span data-icon="show_chart"></span>可视化模板</h2>
+          <div class="quick-list">
+            <button class="quick" data-q="什么是正态分布">正态分布</button>
+            <button class="quick" data-q="画一个中心极限定理的演示，n 从 1 到 30 看样本均值分布收敛">中心极限定理</button>
+            <button class="quick" data-q="帮我画一个假设检验的拒绝域示意图">假设检验</button>
+            <button class="quick" data-q="画一个线性回归的拟合演示">线性回归</button>
+          </div>
+        </div>
+        <div class="section">
+          <h2><span data-icon="library_books"></span>语料分布</h2>
+          <div id="courseList" class="course-list subtle">等待索引信息</div>
+        </div>
+      </div>
+
+      <!-- 归档：最近聊天 + 测试记录 -->
+      <div class="nav-panel" data-nav-panel="archives" hidden>
+        <div class="section">
+          <h2><span data-icon="history"></span>最近聊天</h2>
+          <div id="historyList" class="record-list subtle">等待聊天记录</div>
+        </div>
+        <div class="section">
+          <h2><span data-icon="science"></span>测试记录</h2>
+          <div id="testRunList" class="record-list subtle">等待测试记录</div>
+        </div>
+      </div>
+
+      <!-- 设置：外观 + 智能体 + 语言 + 服务状态 + 笔记 -->
+      <div class="nav-panel" data-nav-panel="settings" hidden>
+        <!-- 外观 -->
+        <div class="section">
+          <h2><span data-icon="palette"></span><span data-i18n="settings.appearance">外观</span></h2>
+          <div class="setting-row">
+            <div class="label-block">
+              <b data-i18n="settings.theme">主题</b>
+              <span class="subtle" data-i18n="settings.theme.hint">浅色 / 深色 / 跟随系统</span>
+            </div>
+            <div class="segmented" data-setting="theme">
+              <button class="segment active" type="button" data-value="light" data-i18n="theme.light">浅色</button>
+              <button class="segment" type="button" data-value="dark" data-i18n="theme.dark">深色</button>
+              <button class="segment" type="button" data-value="auto" data-i18n="theme.auto">自动</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="label-block">
+              <b data-i18n="settings.font_size">字体大小</b>
+              <span class="subtle" data-i18n="settings.font_size.hint">正文字号缩放</span>
+            </div>
+            <div class="segmented" data-setting="fontScale">
+              <button class="segment" type="button" data-value="0.7" data-i18n="font_size.sm">小</button>
+              <button class="segment active" type="button" data-value="0.8" data-i18n="font_size.md">中</button>
+              <button class="segment" type="button" data-value="0.95" data-i18n="font_size.lg">大</button>
+              <button class="segment" type="button" data-value="1.15" data-i18n="font_size.xl">特大</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="label-block">
+              <b data-i18n="settings.font_family">正文字体</b>
+              <span class="subtle" data-i18n="settings.font_family.hint">衬线 / 无衬线</span>
+            </div>
+            <div class="segmented" data-setting="fontFamily">
+              <button class="segment active" type="button" data-value="serif" data-i18n="font_family.serif">衬线</button>
+              <button class="segment" type="button" data-value="sans" data-i18n="font_family.sans">无衬线</button>
+            </div>
+          </div>
+          <div class="toggle-row" data-setting="bgAnimation">
+            <div class="label-block">
+              <b data-i18n="settings.bg_animation">背景动效</b>
+              <span class="subtle" data-i18n="settings.bg_animation.hint">WebGL 网格动画</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" checked data-setting-input="bgAnimation">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 智能体 -->
+        <div class="section">
+          <h2><span data-icon="smart_toy"></span><span data-i18n="settings.agent">智能体</span></h2>
+          <div class="toggle-row">
+            <div class="label-block">
+              <b data-i18n="settings.use_model">使用模型</b>
+              <span class="subtle" data-i18n="settings.use_model.hint">关闭时只用离线路由答案</span>
+            </div>
+            <label class="switch">
+              <input id="modelToggle" type="checkbox" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="label-block">
+              <b data-i18n="settings.output_mode">输出模式</b>
+              <span class="subtle" data-i18n="settings.output_mode.hint">回答风格偏好</span>
+            </div>
+            <div class="segmented" id="styleSelector" aria-label="回答偏好">
+              <button class="segment active" type="button" data-style="rigorous" data-i18n="output.rigorous">严谨</button>
+              <button class="segment" type="button" data-style="examples" data-i18n="output.examples">举例</button>
+              <button class="segment" type="button" data-style="concise" data-i18n="output.concise">简洁</button>
+              <button class="segment" type="button" data-style="caveman" data-i18n="output.caveman">极简</button>
+            </div>
+          </div>
+          <div class="toggle-row" data-setting="showThinking">
+            <div class="label-block">
+              <b data-i18n="settings.show_thinking">显示思考链</b>
+              <span class="subtle" data-i18n="settings.show_thinking.hint">展示模型推理过程</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" checked data-setting-input="showThinking">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="toggle-row" data-setting="autoArtifact">
+            <div class="label-block">
+              <b data-i18n="settings.auto_artifact">自动生成组件</b>
+              <span class="subtle" data-i18n="settings.auto_artifact.hint">关闭后需手动点击生成</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" checked data-setting-input="autoArtifact">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 语言 -->
+        <div class="section">
+          <h2><span data-icon="language"></span><span data-i18n="settings.language">语言</span></h2>
+          <div class="setting-row">
+            <div class="label-block">
+              <b data-i18n="settings.ui_language">界面语言</b>
+              <span class="subtle">UI Language</span>
+            </div>
+            <div class="segmented" data-setting="language">
+              <button class="segment active" type="button" data-value="zh">中文</button>
+              <button class="segment" type="button" data-value="en">English</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 服务状态 -->
+        <div class="section">
+          <h2><span data-icon="tune"></span><span data-i18n="settings.service_status">服务状态</span></h2>
+          <div id="statusGrid" class="status-grid">
+            <div class="metric"><b>服务</b><span>读取中</span></div>
+          </div>
+        </div>
+
+        <!-- 笔记 -->
+        <div class="section">
+          <h2><span data-icon="note_add"></span><span data-i18n="settings.notes">我的笔记</span></h2>
+          <button class="quick" id="openNotes" type="button" style="width:100%" data-i18n="settings.update_notes">更新笔记到知识库</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部开发视图卡片（= user/dev 双模式开关） -->
+    <div class="dev-card">
+      <div class="dev-card-row">
+        <span>开发视图</span>
+        <label class="switch">
+          <input id="modelModeToggle" type="checkbox" aria-label="切换开发视图">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p>路线、来源与运行诊断</p>
+    </div>
+  </aside>
+
+  <div class="main-wrap">
+    <!-- 顶栏：当前工作区上下文 + 搜索 + 服务状态 -->
+    <header class="topbar">
+      <button id="drawerToggle" class="drawer-toggle" type="button" title="打开侧栏" aria-label="打开侧栏">
+        <span data-icon="menu" data-icon-size="20"></span>
+      </button>
+      <div class="topbar-context">
+        <span class="eyebrow">Learning workspace</span>
+        <strong id="topbarSection">对话</strong>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <span id="topbarMode" class="mode-label">专注模式</span>
+      </div>
+      <div class="topbar-actions">
+        <div id="topStatus" class="topbar-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span><span>服务读取中</span>
+        </div>
+        <div class="search-box">
+          <span data-icon="search" data-icon-size="16"></span>
+          <input id="topSearch" type="search" placeholder="搜索历史问答…" aria-label="搜索历史" />
+        </div>
+        <div class="topbar-avatar" title="当前学习会话" aria-label="当前学习会话"><span data-icon="person" data-icon-size="18"></span></div>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="content-row">
+        <!-- 中栏：对话 -->
+        <section id="messages" class="messages">
+          <div id="welcomeMessage" class="msg-row assistant">
+            <div class="avatar avatar-assistant"><span class="avatar-mark">V</span></div>
+            <div class="msg-col">
+              <div class="msg assistant welcome-intro">
+                <div class="welcome-kicker"><span class="status-dot" aria-hidden="true"></span>VeriMath learning workspace</div>
+                <h2>把统计学问题，变成清晰的下一步。</h2>
+                <p>从概念理解、方法选择到可视化演示，输入你的真实问题，小艺会给出可验证、能继续追问的学习路径。</p>
+                <div class="welcome-grid" aria-label="开始学习">
+                  <button class="welcome-prompt" type="button" data-q="什么是正态分布">
+                    <span data-icon="lightbulb" data-icon-size="18"></span>
+                    <span><b>梳理一个概念</b><small>定义、直觉与适用边界</small></span>
+                  </button>
+                  <button class="welcome-prompt" type="button" data-q="两组成绩比较应该用什么统计方法？">
+                    <span data-icon="tune" data-icon-size="18"></span>
+                    <span><b>选择统计方法</b><small>根据数据与研究问题判断</small></span>
+                  </button>
+                  <button class="welcome-prompt" type="button" data-q="画一个中心极限定理的演示，n 从 1 到 30 看样本均值分布收敛">
+                    <span data-icon="show_chart" data-icon-size="18"></span>
+                    <span><b>做一个可视化</b><small>拖动参数，观察分布如何变化</small></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 右栏：洞察（xl + 开发者模式显示） -->
+        <aside class="inspect">
+          <div class="inspect-head">
+            <h3>本轮洞察</h3>
+          </div>
+          <div class="inspect-body">
+            <div class="section">
+              <div id="sources" class="insight-block">
+                <div class="subtle">暂无来源</div>
+              </div>
+            </div>
+            <div class="section">
+              <div id="diagnostics" class="insight-block">
+                <div class="subtle">还没有请求</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- 粘底输入：渐变淡出 + 建议 chips + rounded-2xl 输入条 -->
+      <div class="composer-wrap">
+        <div class="composer-inner">
+          <div class="ctx-hint" id="ctxHint"><span data-icon="memory"></span><span id="ctxHintText">新对话</span></div>
+          <div class="quick-chips" id="quickChips">
+            <button type="button" data-q="什么是正态分布"><span data-icon="show_chart"></span>正态分布</button>
+            <button type="button" data-q="帮我整理一个方差分析的课件"><span data-icon="menu_book"></span>课件</button>
+            <button type="button" data-q="出一道关于 Welch t 检验的练习题"><span data-icon="edit_note"></span>出题</button>
+            <button type="button" data-q="画一个中心极限定理的演示，n 从 1 到 30 看样本均值分布收敛"><span data-icon="animation"></span>可视化</button>
+          </div>
+          <form id="composer" class="composer-row">
+            <div class="composer-side">
+              <button id="clearContext" class="composer-icon-btn" type="button" title="清空多轮上下文，开始新对话" aria-label="新对话">
+                <span data-icon="add_circle" data-icon-size="20"></span>
+              </button>
+              <button id="composerNotes" class="composer-icon-btn" type="button" title="更新笔记到知识库" aria-label="笔记">
+                <span data-icon="note_add" data-icon-size="20"></span>
+              </button>
+            </div>
+            <textarea id="query" placeholder="提出你的问题…" rows="1" maxlength="4000" aria-label="输入统计学习问题" data-i18n-placeholder="composer.placeholder"></textarea>
+            <button id="send" class="send" type="submit" disabled>
+              <span data-i18n="composer.send">发送</span><span data-icon="send" data-icon-size="16"></span>
+            </button>
+            <button id="stopGen" class="send stop" type="button" title="提前结束本次生成" hidden>
+              <span data-i18n="composer.stop">停止</span><span data-icon="stop" data-icon-size="16"></span>
+            </button>
+          </form>
+          <p class="composer-foot">VeriMath Agent may produce inaccurate results. Verify critical computations.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Canvas 全屏模态（模型生成的 HTML 组件沉浸式查看） -->
+  <div class="canvas-modal" id="canvasModal" aria-hidden="true">
+    <div class="canvas-modal-frame">
+      <div class="canvas-modal-head">
+        <b id="canvasModalTitle">可视化组件</b>
+        <button type="button" id="canvasModalClose" title="关闭"><span data-icon="close"></span></button>
+      </div>
+      <div class="canvas-modal-body" id="canvasModalBody"></div>
+    </div>
+  </div>
+
+  <!-- 更新笔记弹窗（Scholastic Emerald 风格） -->
+  <div class="canvas-modal" id="notesModal" aria-hidden="true">
+    <div class="canvas-modal-frame" style="max-width:680px;height:auto">
+      <div class="canvas-modal-head" style="background:linear-gradient(135deg,var(--accent-soft),var(--surface-lowest));padding:18px 22px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--primary);display:inline-flex"><span data-icon="note_add" data-icon-size="22"></span></span>
+          <div>
+            <b style="display:block;font-family:var(--serif);font-size:18px;color:var(--primary)">更新笔记到知识库</b>
+            <span class="subtle" style="font-size:12px">笔记入库后将被切片并优先用于后续 RAG 检索</span>
+          </div>
+        </div>
+        <button type="button" id="notesModalClose" title="关闭"><span data-icon="close"></span></button>
+      </div>
+      <div style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;gap:10px">
+          <div style="flex:1;display:flex;flex-direction:column;gap:5px">
+            <label for="notesCourse" style="font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">课程</label>
+            <input id="notesCourse" placeholder="概率论" style="flex:1;padding:10px 14px;border:1px solid var(--line);border-radius:var(--radius-md);font-family:var(--sans);font-size:14px;background:var(--surface-lowest);outline:none;transition:0.15s" onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--line)'">
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:5px">
+            <label for="notesTopic" style="font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">主题</label>
+            <input id="notesTopic" placeholder="中心极限定理" style="flex:1;padding:10px 14px;border:1px solid var(--line);border-radius:var(--radius-md);font-family:var(--sans);font-size:14px;background:var(--surface-lowest);outline:none;transition:0.15s" onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--line)'">
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <label for="notesText" style="font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">笔记内容</label>
+          <textarea id="notesText" placeholder="粘贴你的笔记内容……支持 Markdown 与 LaTeX 公式。" style="min-height:200px;width:100%;resize:vertical;padding:14px;border:1px solid var(--line);border-radius:var(--radius-md);font-family:var(--sans);font-size:14px;line-height:1.7;background:var(--surface-lowest);outline:none;transition:0.15s" onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--line)'"></textarea>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:4px">
+          <span class="subtle" id="notesStatus" style="font-family:var(--mono);font-size:12px"></span>
+          <button id="notesSubmit" class="send" type="button" style="min-width:120px">
+            <span data-icon="check" data-icon-size="16"></span>提交入库
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WebGL 网格背景（Scholastic Emerald 主题，鼠标交互高亮） -->
+  <script src="/static/panel.js"></script>
+</body>
+</html>

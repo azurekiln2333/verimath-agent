@@ -9,23 +9,30 @@ client = TestClient(app)
 
 
 def test_dashboard_serves_panel_html():
+    """静态拆分后：HTML 骨架走 /dashboard，脚本与样式走 /static。"""
     response = client.get("/dashboard")
     assert response.status_code == 200
     assert "数学与统计学习导师" in response.text
-    assert "/api/panel/chat" in response.text
-    assert "function renderMarkdown" in response.text
-    assert ".markdown table" in response.text
+    assert 'rel="icon" href="data:,"' in response.text
     assert "/static/vendor/katex.min.js" in response.text
     assert "/static/vendor/markdown-it.min.js" in response.text
     assert "/static/vendor/purify.min.js" in response.text
-    assert "renderMathInElement" in response.text
-    assert "MathJax" not in response.text
-    assert "styleSelector" in response.text
-    assert "historyList" in response.text
-    assert "testRunList" in response.text
-    assert "protectMathDelimiters" in response.text
-    assert "restoreMathDelimiters" in response.text
-    assert 'rel="icon" href="data:,"' in response.text
+    assert 'src="/static/panel.js"' in response.text
+    assert 'href="/static/panel.css"' in response.text
+    js = client.get("/static/panel.js")
+    assert js.status_code == 200
+    assert "/api/panel/chat" in js.text
+    assert "function renderMarkdown" in js.text
+    assert "renderMathInElement" in js.text
+    assert "MathJax" not in js.text
+    assert "styleSelector" in js.text
+    assert "historyList" in js.text
+    assert "testRunList" in js.text
+    assert "protectMathDelimiters" in js.text
+    assert "restoreMathDelimiters" in js.text
+    css = client.get("/static/panel.css")
+    assert css.status_code == 200
+    assert ".markdown table" in css.text
 
 
 def test_panel_status_masks_key_material():

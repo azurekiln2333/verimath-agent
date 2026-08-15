@@ -9,8 +9,9 @@ def test_model_prompt_requires_latex_delimiters_and_rigorous_style():
         "rigorous",
     )
     joined = "\n".join(message.content for message in messages)
+    # 现行契约（KaTeX 面板）：行内 \(...\)，独立块 $$...$$，禁入代码块
     assert "行内公式用 \\(...\\)" in joined
-    assert "独立公式用 \\[...\\]" in joined
+    assert "$$...$$" in joined
     assert "不要把公式放进反引号代码块" in joined
     assert "严谨优先" in joined
 

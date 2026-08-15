@@ -1,0 +1,36 @@
+{"id": "gaodai-高等代数三-01-1", "query": "什么是线性映射与线性变换？", "expected_route": "concept", "expected_topics": ["线性映射与线性变换", "高等代数"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\01 线性映射与线性变换.md"}
+{"id": "gaodai-高等代数三-02-1", "query": "什么是线性变换的运算与矩阵？", "expected_route": "concept", "expected_topics": ["线性变换的运算与矩阵", "矩阵表示", "幂零"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\02 线性变换的运算与矩阵.md"}
+{"id": "gaodai-高等代数三-02-2", "query": "什么是矩阵表示？", "expected_route": "concept", "expected_topics": ["线性变换的运算与矩阵", "矩阵表示", "幂零"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\02 线性变换的运算与矩阵.md"}
+{"id": "gaodai-高等代数三-03-1", "query": "什么是不变子空间？", "expected_route": "concept", "expected_topics": ["不变子空间", "核", "像"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\03 不变子空间.md"}
+{"id": "gaodai-高等代数三-03-2", "query": "什么是幂等变换？", "expected_route": "concept", "expected_topics": ["不变子空间", "核", "像"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\03 不变子空间.md"}
+{"id": "gaodai-高等代数三-04-1", "query": "特征值和特征向量怎么求？", "expected_route": "solution", "expected_topics": ["特征值与特征向量", "特征多项式", "迹"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\04 特征值与特征向量.md"}
+{"id": "gaodai-高等代数三-05-1", "query": "怎么判断矩阵能不能对角化？", "expected_route": "solution", "expected_topics": ["可对角化矩阵", "过渡矩阵", "矩阵幂"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\05 可对角化矩阵.md"}
+{"id": "gaodai-高等代数三-05-2", "query": "什么是矩阵幂？", "expected_route": "concept", "expected_topics": ["可对角化矩阵", "过渡矩阵", "矩阵幂"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\05 可对角化矩阵.md"}
+{"id": "gaodai-高等代数三-06-1", "query": "什么是向量的内积与欧氏空间？", "expected_route": "concept", "expected_topics": ["向量的内积与欧氏空间", "Cauchy-Schwarz", "Gram行列式"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\06 向量的内积与欧氏空间.md"}
+{"id": "gaodai-高等代数三-06-2", "query": "什么是Cauchy-Schwarz？", "expected_route": "concept", "expected_topics": ["向量的内积与欧氏空间", "Cauchy-Schwarz", "Gram行列式"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\06 向量的内积与欧氏空间.md"}
+{"id": "gaodai-高等代数三-07-1", "query": "施密特正交化怎么做？", "expected_route": "solution", "expected_topics": ["正交基与施密特正交化", "标准正交基"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\07 正交基与施密特正交化.md"}
+{"id": "gaodai-高等代数三-07-2", "query": "什么是标准正交基？", "expected_route": "concept", "expected_topics": ["正交基与施密特正交化", "标准正交基"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\07 正交基与施密特正交化.md"}
+{"id": "gaodai-高等代数三-08-1", "query": "什么是正交变换与对称变换？", "expected_route": "concept", "expected_topics": ["正交变换与对称变换", "正交矩阵", "反射变换"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\08 正交变换与对称变换.md"}
+{"id": "gaodai-高等代数三-08-2", "query": "什么是正交矩阵？", "expected_route": "concept", "expected_topics": ["正交变换与对称变换", "正交矩阵", "反射变换"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\08 正交变换与对称变换.md"}
+{"id": "gaodai-高等代数三-09-1", "query": "二次型怎么化标准形？", "expected_route": "solution", "expected_topics": ["二次型与正定矩阵", "合同", "惯性指数"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\09 二次型与正定矩阵.md"}
+{"id": "gaodai-高等代数三-09-2", "query": "什么是合同？", "expected_route": "concept", "expected_topics": ["二次型与正定矩阵", "合同", "惯性指数"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（三）\\09 二次型与正定矩阵.md"}
+{"id": "gaodai-高等代数二-01-1", "query": "什么是映射与映射性质？", "expected_route": "concept", "expected_topics": ["映射与映射性质", "单射", "满射"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\01 映射与映射性质.md"}
+{"id": "gaodai-高等代数二-01-2", "query": "什么是单射？", "expected_route": "concept", "expected_topics": ["映射与映射性质", "单射", "满射"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\01 映射与映射性质.md"}
+{"id": "gaodai-高等代数二-02-1", "query": "什么是多项式？", "expected_route": "concept", "expected_topics": ["多项式", "整除", "因式分解"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\02 多项式.md"}
+{"id": "gaodai-高等代数二-02-2", "query": "什么是整除？", "expected_route": "concept", "expected_topics": ["多项式", "整除", "因式分解"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\02 多项式.md"}
+{"id": "gaodai-高等代数二-03-1", "query": "行列式怎么计算？", "expected_route": "solution", "expected_topics": ["行列式", "排列", "逆序数"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\03 行列式.md"}
+{"id": "gaodai-高等代数二-03-2", "query": "什么是排列？", "expected_route": "concept", "expected_topics": ["行列式", "排列", "逆序数"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\03 行列式.md"}
+{"id": "gaodai-高等代数二-04-1", "query": "线性方程组怎么解？", "expected_route": "solution", "expected_topics": ["线性方程组", "高斯消元", "增广矩阵"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\04 线性方程组.md"}
+{"id": "gaodai-高等代数二-04-2", "query": "什么是高斯消元？", "expected_route": "concept", "expected_topics": ["线性方程组", "高斯消元", "增广矩阵"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\04 线性方程组.md"}
+{"id": "gaodai-高等代数二-05-1", "query": "矩阵的逆矩阵怎么求？", "expected_route": "solution", "expected_topics": ["矩阵", "矩阵秩", "矩阵乘法"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\05 矩阵.md"}
+{"id": "gaodai-高等代数二-05-2", "query": "什么是矩阵秩？", "expected_route": "concept", "expected_topics": ["矩阵", "矩阵秩", "矩阵乘法"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\05 矩阵.md"}
+{"id": "gaodai-高等代数二-06-1", "query": "矩阵的逆矩阵怎么求？", "expected_route": "solution", "expected_topics": ["矩阵的运算与性质", "高等代数", "矩阵运算"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\06 矩阵的运算与性质.md"}
+{"id": "gaodai-高等代数二-06-2", "query": "什么是矩阵运算？", "expected_route": "concept", "expected_topics": ["矩阵的运算与性质", "高等代数", "矩阵运算"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\06 矩阵的运算与性质.md"}
+{"id": "gaodai-高等代数二-07-1", "query": "什么是向量空间？", "expected_route": "concept", "expected_topics": ["向量空间", "高等代数", "线性空间"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\07 向量空间.md"}
+{"id": "gaodai-高等代数二-07-2", "query": "什么是线性空间？", "expected_route": "concept", "expected_topics": ["向量空间", "高等代数", "线性空间"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\07 向量空间.md"}
+{"id": "gaodai-高等代数二-08-1", "query": "怎么判断向量组的线性相关性？", "expected_route": "solution", "expected_topics": ["向量的线性相关性", "线性无关", "极大线性无关组"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\08 向量的线性相关性.md"}
+{"id": "gaodai-高等代数二-08-2", "query": "什么是线性无关？", "expected_route": "concept", "expected_topics": ["向量的线性相关性", "线性无关", "极大线性无关组"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\08 向量的线性相关性.md"}
+{"id": "gaodai-高等代数二-09-1", "query": "基变换的过渡矩阵怎么求？", "expected_route": "solution", "expected_topics": ["基变换与线性映射", "过渡矩阵", "同构"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\09 基变换与线性映射.md"}
+{"id": "gaodai-高等代数二-09-2", "query": "什么是同构？", "expected_route": "concept", "expected_topics": ["基变换与线性映射", "过渡矩阵", "同构"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\09 基变换与线性映射.md"}
+{"id": "gaodai-高等代数二-10-1", "query": "线性方程组怎么解？", "expected_route": "solution", "expected_topics": ["线性方程组的解空间", "基础解系", "齐次方程组"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\10 线性方程组的解空间.md"}
+{"id": "gaodai-高等代数二-10-2", "query": "什么是齐次方程组？", "expected_route": "concept", "expected_topics": ["线性方程组的解空间", "基础解系", "齐次方程组"], "must_retrieve": true, "note_source": "知识库语料\\高等代数\\高等代数（二）\\10 线性方程组的解空间.md"}

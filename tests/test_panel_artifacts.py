@@ -19,6 +19,16 @@ from app.panel_html import PANEL_HTML
 _ROOT = Path(__file__).parent.parent
 
 
+def _panel_js() -> str:
+    """面板脚本源码（app/static/panel.js，静态拆分后内联脚本已外置）。"""
+    return (_ROOT / "app" / "static" / "panel.js").read_text(encoding="utf-8")
+
+
+def _panel_css() -> str:
+    """面板样式源码（app/static/panel.css）。"""
+    return (_ROOT / "app" / "static" / "panel.css").read_text(encoding="utf-8")
+
+
 def test_visualization_scripts_are_loaded_in_dependency_order() -> None:
     """statlib 必须在 plot/widgets 之前 —— 后两者在加载时就 require 它。"""
     order = [
@@ -49,9 +59,10 @@ def test_artifacts_rendered_on_meta_not_only_final() -> None:
     只在 final 画的话，学生要等整段 LLM 文本流完才看到图 ——
     而图恰恰不依赖那段文本。
     """
-    meta_block = PANEL_HTML[
-        PANEL_HTML.index("if (evt.event === 'meta')"):
-        PANEL_HTML.index("} else if (evt.event === 'delta')")
+    js = _panel_js()
+    meta_block = js[
+        js.index("if (evt.event === 'meta')"):
+        js.index("} else if (evt.event === 'delta')")
     ]
     assert "renderArtifacts" in meta_block, "meta 阶段应渲染 artifacts"
 
@@ -62,41 +73,44 @@ def test_artifact_host_is_outside_the_streaming_bubble() -> None:
     流式阶段用 pending.textContent = acc 反复重写气泡内容，
     图若挂在气泡内会被每个 token 抹掉。
     """
-    assert "const artifactHost = document.createElement('div')" in PANEL_HTML
-    assert "renderArtifacts(evt.data.artifacts, artifactHost)" in PANEL_HTML
+    js = _panel_js()
+    assert "const artifactHost = document.createElement('div')" in js
+    assert "renderArtifacts(evt.data.artifacts, artifactHost)" in js
     # 断言容器直接挂在消息列表上，而不是 pending 气泡里
-    assert "messages.appendChild(artifactHost)" in PANEL_HTML
-    assert "pending.appendChild(artifactHost)" not in PANEL_HTML
+    assert "messages.appendChild(artifactHost)" in js
+    assert "pending.appendChild(artifactHost)" not in js
 
 
 def test_artifact_rendering_is_idempotent() -> None:
     """meta 与 final 都带 artifacts，重复渲染不能画出两份。"""
-    assert "artifactsDone" in PANEL_HTML, "应有幂等标记"
+    assert "artifactsDone" in _panel_js(), "应有幂等标记"
 
 
 def test_artifact_failure_degrades_gracefully() -> None:
     """渲染失败必须只影响图本身，并且上报。"""
-    assert "artifact-error" in PANEL_HTML
-    assert "文字答案不受影响" in PANEL_HTML
-    assert "reportRenderFail" in PANEL_HTML
+    assert "artifact-error" in _panel_js() or "artifact-error" in _panel_css()
+    assert "文字答案不受影响" in _panel_js()
+    assert "reportRenderFail" in _panel_js()
 
 
 def test_sliders_have_accessible_names() -> None:
     """无 aria-label 的 range 输入，屏幕阅读器只会读「滑块」。"""
-    assert "input.setAttribute('aria-label', c.label)" in PANEL_HTML
+    assert "input.setAttribute('aria-label', c.label)" in _panel_js()
 
 
 def test_artifact_css_present() -> None:
+    css = _panel_css()
     for cls in ("artifact-head", "artifact-caption", "artifact-controls",
                 "artifact-note", "artifact-dual", "artifact-error"):
-        assert f".{cls}" in PANEL_HTML, f"缺少 {cls} 样式"
+        assert f".{cls}" in css, f"缺少 {cls} 样式"
 
 
 def test_slider_touch_target_and_focus_visible() -> None:
     """滑块是主要交互方式：触摸目标要够大，键盘焦点要可见。"""
-    controls_css = PANEL_HTML[
-        PANEL_HTML.index(".artifact-control input"):
-        PANEL_HTML.index(".artifact-reset")
+    css = _panel_css()
+    controls_css = css[
+        css.index(".artifact-control input"):
+        css.index(".artifact-reset")
     ]
     assert "min-height" in controls_css, "滑块应有最小触摸高度"
     assert "focus-visible" in controls_css, "滑块应有可见焦点样式"
@@ -104,27 +118,26 @@ def test_slider_touch_target_and_focus_visible() -> None:
 
 def test_dual_layout_collapses_on_narrow_screens() -> None:
     """双图布局在窄屏必须堆叠，否则每张图挤成不可读的一半宽。"""
-    assert "@media (max-width: 640px)" in PANEL_HTML
-    narrow = PANEL_HTML[PANEL_HTML.index("@media (max-width: 640px)"):]
+    css = _panel_css()
+    assert "@media (max-width: 640px)" in css
+    narrow = css[css.index("@media (max-width: 640px)"):]
     assert "artifact-dual" in narrow[:200]
 
 
-def test_inline_panel_script_has_valid_syntax() -> None:
-    """内联脚本语法错误会让整个面板的 JS 全部失效。"""
+def test_panel_js_has_valid_syntax() -> None:
+    """panel.js 语法错误会让整个面板的 JS 全部失效。"""
     node = shutil.which("node")
     if node is None:
         pytest.skip("未安装 node")
-    blocks = re.findall(r"<script>(.*?)</script>", PANEL_HTML, re.S)
-    assert blocks, "面板应有内联脚本"
     tmp = _ROOT / "build"
     tmp.mkdir(exist_ok=True)
     path = tmp / "_panel_syntax_check.js"
     try:
-        path.write_text(blocks[-1], encoding="utf-8")
+        path.write_text(_panel_js(), encoding="utf-8")
         proc = subprocess.run(
             [node, "--check", str(path)],
             capture_output=True, text=True, timeout=60, encoding="utf-8",
         )
-        assert proc.returncode == 0, f"面板内联 JS 语法错误:\n{proc.stderr}"
+        assert proc.returncode == 0, f"面板 JS 语法错误:\n{proc.stderr}"
     finally:
         path.unlink(missing_ok=True)

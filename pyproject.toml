@@ -24,6 +24,9 @@ load = [
 vector = [
     "chromadb>=0.5,<1",
 ]
+linalg = [
+    "sympy>=1.13",
+]
 ocr = [
     "paddleocr>=2.8",
 ]

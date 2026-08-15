@@ -103,7 +103,9 @@ class GenerateExerciseTool:
         text = render_exercise(ex)
         return ToolResult(
             content=text,
-            summary={"topic": ex.topic, "difficulty": difficulty, "self_check_ok": ex.self_check_ok},
+            summary={"topic": ex.topic, "difficulty": difficulty,
+                     "self_check_ok": ex.self_check_ok,
+                     "answer_verified": ex.answer_verified},
         )
 
 
@@ -255,10 +257,12 @@ def build_tool_registry(
 ) -> "ToolRegistry":
     """组装默认工具集。依赖注入共享实例，返回就绪的 ToolRegistry。"""
     from app.tools.registry import ToolRegistry
+    from app.linalg.tool import LinalgStepSolveTool
     return ToolRegistry([
         PlotDistributionTool(),
         GenerateExerciseTool(model_client),
         RecommendMethodTool(),
         SearchKnowledgeBaseTool(retriever, limit=retrieval_limit),
         BuildCanvasTool(model_client),
+        LinalgStepSolveTool(),
     ])

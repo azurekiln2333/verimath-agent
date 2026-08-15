@@ -8,12 +8,6 @@ def test_method_selection_asks_for_design_info():
     assert "因变量" in answer.text
 
 
-def test_learning_path_route():
-    answer = TutorRouter().answer("概率论和数理统计怎么学，给我学习路线")
-    assert answer.route == "learning_path"
-    assert "概率基础" in answer.text
-
-
 def test_concept_explains_central_limit_theorem():
     answer = TutorRouter().answer("中心极限定理是什么？")
     assert answer.route == "concept"

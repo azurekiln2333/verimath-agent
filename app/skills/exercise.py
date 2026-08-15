@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from app.model_client import ModelMessage, OpenAICompatibleClient
 from app.render.latex_lint import lint_latex
+from app.skills._json_utils import extract_json_object as _extract_json_object
 
 
 @dataclass(frozen=True)
@@ -19,6 +18,8 @@ class Exercise:
     self_check_issues: tuple[str, ...] = field(default_factory=tuple)
     qtype: str = ""           # 题型：计算/证明/应用/选择/填空
     source: str = "template"  # template / model（进 trace 便于评测归因）
+    answer_verified: bool = False      # 数值答案是否通过内核复算
+    verification_note: str = ""        # 验算说明（不一致时给差异）
 
 
 # 原创题库骨架：按主题给出题干模板 + 分步提示 + 解题大纲（含 LaTeX 公式）。
@@ -116,39 +117,67 @@ async def generate_exercise_with_model(
     model_client: OpenAICompatibleClient | None = None,
     history: list[ModelMessage] | None = None,
 ) -> Exercise:
-    """让模型按知识点+难度+题型生成原创试题。
+    """带数值验算的出题：模型生成 → 内核复算 → 不一致回喂重生成（≤3 轮）。
 
-    强制 JSON 输出 → 解析 → lint_latex 自检；任一环节失败回退到模板题。
-    模板兜底保证 MODEL_ENABLED=false 或模型异常时仍可出题，与 generate_exercise 行为对齐。
+    GateCraft 数值纪律的落点：题目声称的答案必须被确定性代码重算确认，
+    任何一轮失败都回退模板题，保证输出永远可用且数值永远正确。
+    answer_check 缺失（非计算题）时跳过验算，仅做 latex 自检。
     """
     if model_client is None or not model_client.enabled:
         return generate_exercise(query, difficulty)
-    try:
-        ex = await _ask_model_for_exercise(query, difficulty, qtype, model_client, history)
-    except Exception:
-        return generate_exercise(query, difficulty)
-    # 模型未生成或 latex 自检未过 → 回退模板，保证输出永远可用
-    if ex is None or not ex.self_check_ok:
-        return generate_exercise(query, difficulty)
-    return ex
+    from app.linalg.tool import verify_answer
+    messages: list[ModelMessage] = []
+    last_note = ""
+    for attempt in range(3):
+        try:
+            ex, check = await _ask_model_for_exercise_checked(
+                query, difficulty, qtype, model_client, history, feedback=last_note
+            )
+        except Exception:
+            return generate_exercise(query, difficulty)
+        if ex is None or not ex.self_check_ok:
+            last_note = "上次输出 LaTeX 自检未通过，必须严格使用 \\(...\\) 与 \\[...\\] 分隔符。"
+            continue
+        if check is None:
+            return ex  # 非计算题，无 answer_check，格式自检已过
+        ok, actual = verify_answer(
+            check.get("operation", ""), check.get("matrix", []), check.get("expected", ""),
+            b=check.get("b"),
+        )
+        if ok:
+            return replace(ex, answer_verified=True, verification_note="内核复算一致")
+        last_note = (
+            f"你声称的答案 {check.get('expected')} 与精确复算结果 {actual} 不一致。"
+            "重新出题：先在内心用行变换算出真实答案，再填 answer_check。"
+        )
+    return generate_exercise(query, difficulty)
 
 
-async def _ask_model_for_exercise(
+async def _ask_model_for_exercise_checked(
     query: str,
     difficulty: str,
     qtype: str,
     model_client: OpenAICompatibleClient,
     history: list[ModelMessage] | None,
-) -> Exercise | None:
+    feedback: str = "",
+) -> tuple[Exercise | None, dict | None]:
+    """模型出题（含 answer_check 字段）。feedback 非空时作为纠错消息注入。"""
     system = (
-        "你是统计学命题专家。按知识点、难度、题型生成一道原创试题。"
+        "你是统计学与线性代数命题专家。按知识点、难度、题型生成一道原创试题。"
         "必须输出 JSON 对象，字段：topic, difficulty, qtype, problem, hints(数组), solution_outline。"
         "要求：\n"
         "1. problem 是题干，含具体情境与数值；solution_outline 是解题大纲，含关键公式与结论。\n"
         "2. 所有数学公式必须用 LaTeX 分隔符：行内 \\(...\\)，独立 \\[...\\]。\n"
         "3. hints 给 2-3 条分步提示，不直接给答案。\n"
         "4. 不要复刻任何受版权题库的原文，必须是原创。\n"
-        "5. 只输出 JSON，不要解释、不要 Markdown 代码块包裹。"
+        "5. 计算题（有确定数值答案的）必须额外输出 answer_check 对象："
+        '{"operation": "det|rank|inverse|rref|solve|eigen|jordan|quadratic_form", "matrix": [[...]], "expected": "答案", '
+        '"b": [..]（仅 solve 需要）}。'
+        "expected 格式：det/rank 给数值；inverse/rref 给矩阵串 \"[[a/b, c], ..]\"；"
+        "solve 给解向量 \"[x1, x2]\"；eigen 给特征值列表 \"λ1, λ2\"（可用 sqrt 形式）；"
+        "jordan 给 J 矩阵串 \"[[a, b], [c, d]]\"；quadratic_form 给惯性指数 \"p,q\" 或正定性关键词。"
+        "expected 必须是你精确计算的结果（分数用 a/b 形式）。概念题/证明题省略 answer_check。\n"
+        "6. 只输出 JSON，不要解释、不要 Markdown 代码块包裹。"
     )
     user = (
         f"知识点/诉求：{query or '概率论与数理统计'}\n"
@@ -160,21 +189,29 @@ async def _ask_model_for_exercise(
         *(history or []),
         ModelMessage(role="user", content=user),
     ]
+    if feedback:
+        messages.append(ModelMessage(role="user", content=f"出题纠错要求：{feedback}"))
     raw = await model_client.complete(messages, response_format={"type": "json_object"})
-    return _parse_exercise_json(raw, difficulty, qtype)
+    return _parse_exercise_checked(raw, difficulty, qtype)
 
 
-def _parse_exercise_json(raw: str, difficulty: str, qtype: str) -> Exercise | None:
+def _parse_exercise_checked(raw: str, difficulty: str, qtype: str) -> tuple[Exercise | None, dict | None]:
     obj = _extract_json_object(raw)
     if obj is None:
-        return None
+        return None, None
+    check = obj.get("answer_check") if isinstance(obj.get("answer_check"), dict) else None
+    ex = _exercise_from_json(obj, difficulty, qtype)
+    return ex, check
+
+
+def _exercise_from_json(obj: dict, difficulty: str, qtype: str) -> Exercise | None:
+    """从模型 JSON 构造 Exercise，含 LaTeX 自检。problem/solution 缺一即弃。"""
     problem = str(obj.get("problem", "")).strip()
     solution = str(obj.get("solution_outline", "")).strip()
     if not problem or not solution:
         return None
     hints_raw = obj.get("hints", [])
     hints = tuple(str(h).strip() for h in hints_raw if str(h).strip()) if isinstance(hints_raw, list) else ()
-    # latex 自检：题干+大纲必须可渲染，否则上层回退模板
     issues_list = lint_latex(problem + "\n" + solution)
     issues = tuple(f"{i.kind}: {i.detail}" for i in issues_list)
     topic = str(obj.get("topic", "")).strip() or "custom"
@@ -191,25 +228,3 @@ def _parse_exercise_json(raw: str, difficulty: str, qtype: str) -> Exercise | No
     )
 
 
-def _extract_json_object(raw: str) -> dict | None:
-    """从模型输出里提取 JSON 对象。容忍 ```json``` 包裹与前后多余文字。"""
-    if not raw:
-        return None
-    text = raw.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidate = fenced.group(1) if fenced else text
-    try:
-        obj = json.loads(candidate)
-        if isinstance(obj, dict):
-            return obj
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        try:
-            obj = json.loads(m.group(0))
-            if isinstance(obj, dict):
-                return obj
-        except json.JSONDecodeError:
-            return None
-    return None

@@ -623,8 +623,12 @@ def build_agent_messages(
         "关键公式用独立 `$$...$$` 居中成块；行内公式用 \\(...\\)。直觉/口诀用 `> ` 引用块；易错点用 `**⚠️ 常见误区**`。"
         "\n\n工具能力（核心 —— 你是一个 agent，不是问答机）：你拥有以下工具：plot_distribution（生成可交互分布/检验图）、"
         "generate_exercise（出题）、recommend_method（推荐统计方法）、search_knowledge_base（查本地资料防幻觉）、"
-        "build_canvas（生成自定义 HTML 可视化组件，突破固定图上限）。"
+        "build_canvas（生成自定义 HTML 可视化组件，突破固定图上限）、"
+        "linalg_step_solve（线性代数逐步计算器：求逆/行列式/特征值/解方程组/基础解系/秩，逐步展示并用 SymPy 复算）。"
         "需要可视化、出题、查本地资料、或要演示/动画时，**主动调用对应工具**，不要凭空用文字描述本该由工具产出的东西。"
+        "\n\n数值纪律（硬规则）：**任何数值断言（矩阵结果、行列式、特征值、方程解、统计量）必须先调用计算工具获得，"
+        "禁止口算或凭记忆给出计算结果**。工具会返回带 SymPy 复算凭证的逐步结果，你在其上做解释和教学，不改动数值。"
+        "简单加减乘除也不例外——你的算术会错，工具不会。"
         "工具结果会回填给你，你据此组织最终回答。可视化组件不会自动展示，会以「生成可视化」按钮呈现，用户点击后才渲染——"
         "所以文字里可以自然地提示「下方可点击查看可视化」。不要为了调用而调用：纯概念解释、澄清提问、闲聊不需要工具。"
         "\n\n对话能力：你能看到完整历史对话（已做滚动摘要），请承接上文深入，必要时主动追问澄清，支持多轮深度探讨。"
@@ -1046,70 +1050,105 @@ async def answer_query(
     history: list[ModelMessage] | None = None,
     profile_text: str | None = None,
 ) -> AgentResponse:
+    """统一回答入口（收敛后唯一编排）：
+    骨架 → 可用模型时走 Agent 工具循环（exercise 例外，走结构化生成+验算）→ 失败回退骨架。
+    旧的 enhance_with_model 纯润色路径与 _attach_tier2_artifact 兜底路径已删除：
+    工具调用能力覆盖两者，且模型可主动查库/算数，不再需要被动喂资料。"""
     if retrieved is None:
         retrieved = [chunk.as_dict() for chunk in retriever.search(query, limit=settings.retrieval_limit)]
     response = router.answer(query, retrieved)
     response = apply_answer_style_flag(response, answer_style)
-    if use_model:
+    if use_model and model_client.enabled and response.route != "guard" and not response.requires_clarification:
         if response.route == "exercise":
-            # 试题：结构化模型生成（JSON + latex 自检），失败回退模板骨架
+            # 试题：结构化模型生成（JSON + latex 自检 + 内核验算），失败回退模板骨架
             response = await _enhance_exercise_with_model(query, response, history)
+        elif response.route == "courseware":
+            # 课件：结构化七段式生成（JSON + latex 自检 + 例题验算），失败回退骨架
+            response = await _enhance_courseware_with_model(query, response, history)
         else:
-            response = await enhance_with_model(
-                query, response, normalize_answer_style(answer_style), history=history, profile_text=profile_text
-            )
-        # Tier 2：规则（Tier 1）未命中时，让模型按 widget 清单补一个可调组件
-        if not response.artifacts and response.route != "guard":
-            response = await _attach_tier2_artifact(query, response, history)
+            response = await _agent_answer(query, response, answer_style, history, profile_text)
     return response
 
 
-async def enhance_with_model(
-    query: str,
-    response: AgentResponse,
-    answer_style: str = "rigorous",
-    history: list[ModelMessage] | None = None,
-    profile_text: str | None = None,
-) -> AgentResponse:
-    if not model_client.enabled or response.route == "guard" or response.requires_clarification:
-        return response
-    try:
-        answer = await model_client.complete(build_model_messages(query, response, answer_style, history, profile_text))
-    except Exception as exc:
-        flags = dict(response.flags)
-        flags["model_used"] = False
-        flags["model_error"] = type(exc).__name__
-        return replace(response, flags=flags)
-    flags = dict(response.flags)
-    flags["model_used"] = True
-    return replace(response, text=answer, flags=flags)
-
-
-async def _attach_tier2_artifact(
+async def _enhance_courseware_with_model(
     query: str,
     response: AgentResponse,
     history: list[ModelMessage] | None,
 ) -> AgentResponse:
-    """Tier 1 规则未命中时，让模型按 widget 清单补一个可调组件。
-
-    命中则挂上 artifact 并标记 tier2；未命中静默返回原 response。
-    与 router._attach_artifact 一样：配图是增强，失败绝不影响文字答案。
-    """
+    from app.skills.courseware import generate_courseware_with_model, render_courseware_md
     try:
-        plan = await generate_tier2_spec(query, response.route, model_client, history)
+        cw, _md = await generate_courseware_with_model(query, model_client, history)
     except Exception:
         return response
-    if not plan.hit or plan.spec is None:
-        return response
-    try:
-        payload = plan.spec.as_dict()
-    except Exception:
-        return response
+    if cw.source != "model":
+        return response  # 模型未启用或生成失败，保留骨架
     flags = dict(response.flags)
-    flags["artifact_rule"] = plan.matched_rule
-    flags["artifact_kind"] = plan.spec.kind
-    flags["artifact_tier"] = "tier2"
-    return replace(response, artifacts=[payload], flags=flags)
+    flags["courseware_source"] = "model"
+    flags["latex_self_check"] = cw.self_check_ok
+    flags["example_verified"] = cw.example_verified
+    return replace(response, text=render_courseware_md(cw), flags=flags)
+
+
+async def _agent_answer(
+    query: str,
+    response: AgentResponse,
+    answer_style: str,
+    history: list[ModelMessage] | None,
+    profile_text: str | None,
+) -> AgentResponse:
+    """非流式 Agent 工具循环（a2a / 非流式面板共用）。失败回退骨架，绝不抛出。"""
+    try:
+        seed = build_agent_messages(
+            query, response, normalize_answer_style(answer_style), history, profile_text
+        )
+        text, artifacts, model_error = await run_agent_loop(seed, tool_registry)
+    except Exception as exc:
+        text, artifacts, model_error = "", [], type(exc).__name__
+    flags = dict(response.flags)
+    if text:
+        flags["model_used"] = True
+        flags["agent_loop"] = True
+        if model_error:
+            flags["model_error"] = model_error
+        return replace(response, text=text, artifacts=artifacts or response.artifacts, flags=flags)
+    flags["model_used"] = False
+    if model_error:
+        flags["model_error"] = model_error
+    return replace(response, flags=flags)
+
+
+async def run_agent_loop(
+    seed_messages: list[ModelMessage],
+    registry,
+    max_iterations: int = 6,
+) -> tuple[str, list[dict[str, Any]], str | None]:
+    """非流式 Agent 循环：调模型（带工具）→ 有工具调用就执行回填 → 直到无调用或达上限。
+
+    返回 (最终文本, artifact 列表, 错误名或 None)。与 run_agent_loop_stream 同构，
+    供 a2a 与非流式面板使用；思考链 reasoning_content 按轮回传（DeepSeek 400 约束）。
+    """
+    messages = list(seed_messages)
+    tools_schema = registry.to_openai_schema()
+    final_text = ""
+    artifacts: list[dict[str, Any]] = []
+
+    for _ in range(max_iterations):
+        result = await model_client.chat(messages, tools=tools_schema, tool_choice="auto")
+        if not result.tool_calls:
+            return (result.content or final_text or "").strip() or final_text, artifacts, None
+        messages.append(_assistant_tool_msg(
+            result.content or "", result.tool_calls,
+            reasoning_content=result.reasoning_content,
+        ))
+        for tc in result.tool_calls:
+            tool_result = await registry.dispatch(tc.name, tc.arguments)
+            if tool_result.artifact_offer:
+                artifacts.append(tool_result.artifact_offer.get("spec", {}))
+            messages.append(ModelMessage(
+                role="tool", content=tool_result.content, tool_call_id=tc.id, name=tc.name,
+            ))
+    # 达迭代上限：返回模型最后一段可读文本（若有）
+    return final_text, artifacts, "max_iterations"
 
 
 async def _enhance_exercise_with_model(
@@ -1131,6 +1170,7 @@ async def _enhance_exercise_with_model(
     flags["exercise_source"] = "model"
     flags["exercise_topic"] = ex.topic
     flags["latex_self_check"] = ex.self_check_ok
+    flags["answer_verified"] = ex.answer_verified
     return replace(response, text=render_exercise(ex), flags=flags)
 
 
@@ -1265,7 +1305,7 @@ def build_model_messages(
 
 
 def normalize_answer_style(answer_style: str) -> str:
-    if answer_style in {"examples", "concise", "discuss"}:
+    if answer_style in {"examples", "concise", "discuss", "caveman"}:
         return answer_style
     return "rigorous"
 
@@ -1282,6 +1322,12 @@ def answer_style_instruction(answer_style: str) -> str:
         return "在保持数学严谨的前提下，多用具体例子、反例和类比，公式后必须配一个可理解的实例。"
     if style == "concise":
         return "节省时间，先给结论，压缩解释，只保留必要公式、关键条件和一个最小例子。"
+    if style == "caveman":
+        return (
+            "极简模式：结论先行，删掉寒暄与铺垫，每段不超过 3 句，用短句。"
+            "但数学内容绝不压缩：公式必须完整 LaTeX、条件与适用边界必须保留、"
+            "单位与数值精确。压缩的只是连接性文字，不是数学。"
+        )
     if style == "discuss":
         return "探讨模式：像同行研讨一样多角度展开，主动给出不同视角与反例，结尾抛出一个深入追问引导继续探讨。"
     return "严谨优先，面向理学专业学生，必须说明定义、条件、公式、推导直觉、适用边界和常见误区。"
