@@ -14,6 +14,7 @@ ModelMessage 扩展了 tool_calls / tool_call_id / name 三个可选字段以承
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -31,7 +32,7 @@ class ModelMessage:
     frozen 不影响构造：都有默认值，位置参数 ModelMessage("system","hi") 仍可用。
     """
     role: str
-    content: str | None = None
+    content: str | list[dict] | None = None
     tool_calls: list[dict] | None = None       # 仅 assistant：[{id,type,function:{name,arguments}}]
     tool_call_id: str | None = None            # 仅 role="tool"
     name: str | None = None                    # 仅 role="tool"：工具名
@@ -91,6 +92,28 @@ class StreamEvent:
 class OpenAICompatibleClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._http: httpx.AsyncClient | None = None
+
+    async def start(self) -> None:
+        if self._http is None:
+            limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
+            self._http = httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(retries=1, limits=limits),
+            )
+
+    async def aclose(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
+    @asynccontextmanager
+    async def _transport(self, timeout: float):
+        if self._http is not None:
+            yield self._http
+        else:
+            # Standalone scripts/tests have no application lifespan to own a pool.
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                yield client
 
     @property
     def enabled(self) -> bool:
@@ -114,6 +137,7 @@ class OpenAICompatibleClient:
           且对延迟敏感的任务，避免思考链拖慢响应）。
         - temperature：仅在思考关闭时生效。"""
         payload: dict = {"model": self.settings.model_name}
+        payload["max_tokens"] = self.settings.model_max_output_tokens
         use_thinking = self.settings.model_thinking if thinking is None else thinking
         if use_thinking:
             payload["thinking"] = {"type": "enabled"}
@@ -135,6 +159,8 @@ class OpenAICompatibleClient:
         thinking: bool | None = None,
         temperature: float | None = None,
         timeout: float = 180,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         if not self.enabled:
             raise RuntimeError("MODEL_ENABLED, MODEL_API_BASE, and MODEL_API_KEY are not configured")
@@ -146,12 +172,22 @@ class OpenAICompatibleClient:
         })
         if response_format is not None:
             payload["response_format"] = response_format
+        if model:
+            payload["model"] = model
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         headers = {"Authorization": f"Bearer {self.settings.model_api_key}"}
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        async with self._transport(timeout) as client:
+            response = await client.post(url, headers=headers, json=payload, timeout=httpx.Timeout(timeout, connect=10, pool=10))
             response.raise_for_status()
             data = response.json()
-        return data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        if choice.get("finish_reason") in {"length", "content_filter"}:
+            raise RuntimeError("model_output_incomplete")
+        content = choice["message"].get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("model_output_empty")
+        return content
 
     async def stream_complete(self, messages: list[ModelMessage]) -> AsyncIterator[str]:
         """流式返回 token 增量（OpenAI 兼容 SSE）。逐段 yield delta 文本。纯文本，不带工具。"""
@@ -164,8 +200,8 @@ class OpenAICompatibleClient:
             "stream": True,
         })
         headers = {"Authorization": f"Bearer {self.settings.model_api_key}"}
-        async with httpx.AsyncClient(timeout=60) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as response:
+        async with self._transport(60) as client:
+            async with client.stream("POST", url, headers=headers, json=payload, timeout=httpx.Timeout(60, connect=10, pool=10)) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     delta = _parse_sse_delta(line)
@@ -194,8 +230,8 @@ class OpenAICompatibleClient:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
         headers = {"Authorization": f"Bearer {self.settings.model_api_key}"}
-        async with httpx.AsyncClient(timeout=90) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        async with self._transport(90) as client:
+            response = await client.post(url, headers=headers, json=payload, timeout=httpx.Timeout(90, connect=10, pool=10))
             response.raise_for_status()
             data = response.json()
         choice = data["choices"][0]
@@ -249,9 +285,9 @@ class OpenAICompatibleClient:
 
         # index → {id, name, args}
         tc_buf: dict[int, dict] = {}
-        finish_reason = "stop"
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as response:
+        finish_reason = None
+        async with self._transport(120) as client:
+            async with client.stream("POST", url, headers=headers, json=payload, timeout=httpx.Timeout(120, connect=10, pool=10)) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     delta, fr = _parse_sse_chunk(line)
@@ -278,6 +314,10 @@ class OpenAICompatibleClient:
                         if fn.get("arguments"):
                             buf["args"] += fn["arguments"]
 
+        if finish_reason is None:
+            raise RuntimeError("model_stream_incomplete")
+        if finish_reason not in {"stop", "tool_calls"}:
+            raise RuntimeError("model_output_incomplete")
         # 流结束：有 tool_calls → 拼装；否则 → done
         if tc_buf:
             calls: list[ToolCall] = []

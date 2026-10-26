@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.artifacts.planner import plan_artifact
@@ -91,7 +92,7 @@ class GenerateExerciseTool:
                     "type": "object",
                     "properties": {
                         "topic": {"type": "string", "description": "题目主题/知识点，如『Welch t 检验』"},
-                        "difficulty": {"type": "string", "description": "难度：basic/intermediate/advanced", "default": "basic"},
+                        "difficulty": {"type": "string", "enum": ["basic", "intermediate", "advanced"], "description": "难度", "default": "basic"},
                     },
                     "required": ["topic"],
                 },
@@ -158,14 +159,15 @@ class SearchKnowledgeBaseTool:
             "function": {
                 "name": self.name,
                 "description": (
-                    "检索本地统计学习知识库，返回最相关的资料片段（含课程/主题/来源元数据）。"
+                    "检索本地数学与统计知识库，返回最相关的资料片段（含课程/主题/来源元数据）。"
                     "回答具体概念或需要引用本地资料时调用，确保答案有据可依、可标注来源。"
+                    "追问时把指代还原为当前讨论的概念再检索；未命中可以换用更具体的关键词。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "检索关键词或问题"},
-                        "limit": {"type": "integer", "description": "返回片段数", "default": 5},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回片段数", "default": 5},
                     },
                     "required": ["query"],
                 },
@@ -173,23 +175,17 @@ class SearchKnowledgeBaseTool:
         }
 
     async def run(self, query: str, limit: int | None = None, **_: Any) -> ToolResult:
-        n = limit or self.limit
-        chunks = self.retriever.search(query, limit=n)
+        n = max(1, min(limit if limit is not None else self.limit, 10))
+        chunks = await asyncio.to_thread(self.retriever.search, query, limit=n)
         if not chunks:
             return ToolResult(
-                content="本地知识库未命中相关资料。以下回答基于通用知识，请明确告知用户。",
+                content="本次检索未命中相关本地资料，不代表库内没有。可换用相关概念再次检索；已有来源仍然有效，不能编造引用。",
                 summary={"hits": 0},
             )
-        lines: list[str] = []
-        for i, c in enumerate(chunks, start=1):
-            meta = c.metadata or {}
-            lines.append(
-                f"[{i}] course={meta.get('course','?')} topic={meta.get('topic','?')} "
-                f"doc_type={meta.get('doc_type','?')}\n{c.text[:400]}"
-            )
         return ToolResult(
-            content="本地知识库命中以下资料，回答时请标注编号：\n\n" + "\n\n".join(lines),
+            content="本地知识库检索完成，来源编号由本轮回答统一分配。",
             summary={"hits": len(chunks)},
+            sources=[chunk.as_dict() for chunk in chunks],
         )
 
 
@@ -198,8 +194,9 @@ class BuildCanvasTool:
 
     name = "build_canvas"
 
-    def __init__(self, model_client: OpenAICompatibleClient) -> None:
+    def __init__(self, model_client: OpenAICompatibleClient, defer: bool = False) -> None:
         self.model_client = model_client
+        self.defer = defer
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -223,6 +220,13 @@ class BuildCanvasTool:
         }
 
     async def run(self, query: str, context_hint: str = "", **_: Any) -> ToolResult:
+        if self.defer:
+            return ToolResult(
+                content="已记录可视化建议。文字回答完成后提供生成按钮，用户点击后后台制作；目前尚未生成图形。",
+                summary={"hit": True, "deferred": True},
+                artifact_offer={"tier": "canvas", "title": query[:60], "query": query,
+                                "context_hint": context_hint, "route": "concept"},
+            )
         # 延迟导入避免循环依赖（canvas_builder 可能反向引用 tools）
         from app.skills.canvas_builder import build as build_canvas
         spec = await build_canvas(query, context_hint, self.model_client)
@@ -254,15 +258,20 @@ def build_tool_registry(
     retriever: KeywordRetriever,
     model_client: OpenAICompatibleClient,
     retrieval_limit: int = 5,
+    defer_canvas: bool = False,
 ) -> "ToolRegistry":
     """组装默认工具集。依赖注入共享实例，返回就绪的 ToolRegistry。"""
     from app.tools.registry import ToolRegistry
     from app.linalg.tool import LinalgStepSolveTool
+    from app.tools.statistics import CalculateStatisticsTool
+    from app.tools.calculus import CalculateCalculusTool
     return ToolRegistry([
         PlotDistributionTool(),
         GenerateExerciseTool(model_client),
         RecommendMethodTool(),
         SearchKnowledgeBaseTool(retriever, limit=retrieval_limit),
-        BuildCanvasTool(model_client),
+        BuildCanvasTool(model_client, defer=defer_canvas),
         LinalgStepSolveTool(),
+        CalculateStatisticsTool(),
+        CalculateCalculusTool(),
     ])

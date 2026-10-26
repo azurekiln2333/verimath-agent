@@ -1,5 +1,11 @@
 .data/
 .env
+.env.docker
+.env.*.local
+data/
+registry-auth/
+verimath-backup*.tar.gz
+.ci-venv/
 .venv/
 venv/
 __pycache__/

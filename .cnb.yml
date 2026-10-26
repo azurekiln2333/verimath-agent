@@ -1,0 +1,49 @@
+main:
+  push: &verify
+    - name: verify-source
+      docker: &runtime
+        image: cnbcool/default-dev-env:latest
+      stages:
+        - &test
+          name: test-python-and-javascript
+          script: |
+            set -euo pipefail
+            python3 --version
+            node --version
+            python3 -m venv /tmp/verimath-ci
+            /tmp/verimath-ci/bin/python -m pip install -e '.[test,linalg]'
+            MODEL_ENABLED=false /tmp/verimath-ci/bin/python -m pytest -q
+  api_trigger: *verify
+  pull_request: *verify
+
+master:
+  push: *verify
+  api_trigger: *verify
+  pull_request: *verify
+
+"v*":
+  tag_push: &publish
+    - name: verify-and-publish-image
+      docker: *runtime
+      services:
+        - docker
+      stages:
+        - *test
+        - name: build-and-check-image
+          script: |
+            set -euo pipefail
+            REGISTRY="${CNB_DOCKER_REGISTRY:-docker.cnb.cool}"
+            IMAGE="${CNB_IMAGE:-$REGISTRY/$CNB_REPO_SLUG_LOWERCASE}"
+            /tmp/verimath-ci/bin/python -m scripts.image_tags --image "$IMAGE" --tag "$CNB_BRANCH" --revision "$CNB_COMMIT" > /tmp/verimath-image-tags
+            docker build --build-arg "VCS_REF=$CNB_COMMIT" --build-arg "VERSION=$CNB_BRANCH" -t verimath-agent:smoke .
+            /tmp/verimath-ci/bin/python -m scripts.container_smoke verimath-agent:smoke
+        - name: publish-verified-image
+          script: |
+            set -euo pipefail
+            REGISTRY="${CNB_DOCKER_REGISTRY:-docker.cnb.cool}"
+            printf '%s' "$CNB_TOKEN" | docker login "$REGISTRY" --username cnb --password-stdin
+            while IFS= read -r tag; do
+              docker tag verimath-agent:smoke "$tag"
+              docker push "$tag"
+            done < /tmp/verimath-image-tags
+  api_trigger: *publish

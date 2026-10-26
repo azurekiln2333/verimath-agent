@@ -17,8 +17,9 @@ def test_dashboard_serves_panel_html():
     assert "/static/vendor/katex.min.js" in response.text
     assert "/static/vendor/markdown-it.min.js" in response.text
     assert "/static/vendor/purify.min.js" in response.text
-    assert 'src="/static/panel.js"' in response.text
-    assert 'href="/static/panel.css"' in response.text
+    # 静态资源带内容指纹（?v=<hash>）以便改完立即生效，断言只要求前缀匹配
+    assert 'src="/static/panel.js' in response.text
+    assert 'href="/static/panel.css' in response.text
     js = client.get("/static/panel.js")
     assert js.status_code == 200
     assert "/api/panel/chat" in js.text

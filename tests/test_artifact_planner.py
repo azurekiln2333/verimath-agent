@@ -109,6 +109,16 @@ def test_rule_names_unique() -> None:
     assert len(names) == len(set(names)), "规则名必须唯一（写进 trace 用于排查）"
 
 
+def test_normal_symmetry_does_not_trigger_default_parabola():
+    result = plan_artifact("正态分布呈钟形，对称轴为均值，顶点在均值处。")
+    assert result.matched_rule == "normal"
+    assert result.spec.as_dict()["params"]["family"] == "normal"
+
+
+def test_unsupported_function_is_not_replaced_by_x_squared():
+    assert not plan_artifact("请画 y=sin(x) 的函数图像").hit
+
+
 def test_planner_never_raises() -> None:
     """任何输入都不能让选型抛异常 —— 它在主回答路径上。"""
     for weird in ("", " ", "\n\t", "?" * 500, "🎲📊", "中心极限定理" * 100,

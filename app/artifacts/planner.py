@@ -288,7 +288,157 @@ def _lln_viz(_: str) -> ArtifactSpec:
 
 # 规则表：(规则名, 匹配的正则, 构造函数)
 # 顺序即优先级 —— 具体规则必须排在泛化规则之前。
+
+
+def _parse_function(text: str) -> tuple[str, float, float, float] | None:
+    """从题目里抽出 ax²+bx+c 形式的系数。
+
+    与统计规则不同，函数题几乎总是带着具体系数（「y=2x²-4x+1 的顶点」），
+    直接画学生问的那个函数比画一张标准示例更有价值。无法解析时不替换成其他函数。
+    """
+    expr_match = re.search(
+        r"(?:[yY]|[fgFG]\s*\(\s*[xX]\s*\))\s*=\s*([-+\d.]*[xX][-+\d.xX²³^*/() ]*)", text
+    )
+    if not expr_match:
+        return None
+    raw = (expr_match.group(1).replace("−", "-").replace("×", "*").replace(" ", "")
+           .replace("X", "x"))
+    raw = raw.replace("²", "^2").replace("³", "^3")
+    if re.search(r"x\^3", raw):
+        family = "cubic"
+    elif re.search(r"x\^2", raw):
+        family = "quadratic"
+    elif "x" in raw:
+        family = "linear"
+    else:
+        return None
+    try:
+        return family, *_poly_coefficients(raw)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _poly_coefficients(expr: str) -> tuple[float, float, float]:
+    """把 a·x^2+b·x+c 的系数抽出来，只用标准库。
+
+    不用 SymPy：函数图形是高频、轻量操作，而 SymPy 是可选依赖，
+    缺它时整张图会静默退回 y=x² —— 学生看到的就会是别人的函数。
+    """
+    s = expr.replace("x²", "x^2").replace("x³", "x^3").replace("x**", "x^").replace(" ", "")
+    s = re.sub(r"(\d)\*?x", r"\1*x", s)      # 2x → 2*x
+    s = s.replace("x*x", "x^2")               # x*x → x^2
+    s = s.replace("(", "").replace(")", "")    # 系数括号：2*(x) → 2*x
+    if not s:
+        raise ValueError("空表达式")
+    coeffs = {"2": 0.0, "1": 0.0, "0": 0.0}
+    sign = 1.0
+    for term in re.findall(r"[+-]?[^+-]+", s):
+        if term[0] in "+-":
+            sign = -1.0 if term[0] == "-" else 1.0
+            term = term[1:]
+        m = re.fullmatch(r"([\d.]*)\*?x(?:\^(\d))?", term)
+        if m:
+            coef = m.group(1)
+            power = m.group(2) or "1"
+            if power not in coeffs:
+                raise ValueError(f"只支持二次及以下的项：{term}")
+            coeffs[power] += sign * (float(coef) if coef else 1.0)
+            continue
+        try:
+            coeffs["0"] += sign * float(term)
+        except ValueError as exc:
+            raise ValueError(f"无法识别：{term}") from exc
+    return coeffs["2"], coeffs["1"], coeffs["0"]
+
+
+def _quadratic_coeffs(text: str) -> tuple[str, float, float, float]:
+    parsed = _parse_function(text)
+    if parsed:
+        return parsed
+    if re.search(r"(?:y|[fg]\s*\(\s*x\s*\))\s*=", text, re.I):
+        raise ValueError("无法可靠解析该函数，交给自定义可视化")
+    if re.search(r"一次函数|正比例函数", text):
+        return "linear", 0.0, 1.0, 0.0
+    if re.search(r"二次函数|一元二次|抛物线", text):
+        return "quadratic", 1.0, 0.0, 0.0
+    raise ValueError("缺少明确的函数表达式或函数类型")
+
+
+def _fmt_coef(a: float, b: float, c: float, family: str) -> str:
+    """按函数族把系数渲染成人读的多项式（linear 的 a 是一次项系数）。"""
+    if family == "linear":
+        a, b, c = 0.0, a, c
+
+    def term(v: float, var: str) -> str:
+        if abs(v) < 1e-12:
+            return ""
+        sign = "-" if v < 0 else "+"
+        mag = abs(v)
+        num = "" if abs(mag - 1) < 1e-12 and var else f"{mag:g}"
+        return f" {sign} {num}{var}"
+
+    s = (term(a, "x^2") + term(b, "x") + term(c, "")).replace("x^2", "x²")
+    s = s.lstrip(" ")
+    return ("-" + s[2:]) if s.startswith("- ") else (s[2:] if s.startswith("+ ") else s)
+
+
+def _function_plot(text: str) -> ArtifactSpec:
+    family, a, b, c = _quadratic_coeffs(text)
+    # spec 的语义随族变化：quadratic 用 (a,b,c) 表示 a x²+b x+c；
+    # linear 只用 a 作斜率、c 作截距。这里把解析出的多项式系数映射过去，
+    # 避免前端再猜一次系数含义。
+    if family == "linear":
+        a, b, c = b, 0.0, c
+    elif family == "quadratic" and abs(a) < 1e-12:
+        a = 1.0
+    disc = b * b - 4 * a * c
+    if family == "linear":
+        note = (
+            f"一次函数图像是一条直线：斜率 {a:g} 决定倾斜方向与陡峭程度，"
+            f"截距 {c:g} 是它与 y 轴的交点。"
+            + ("直线与 x 轴恰好有一个交点。" if abs(a) > 1e-12
+               else "斜率为 0 时直线与 x 轴平行，没有交点。")
+            + " 拖动斜率看陡峭程度变化，拖动截距看整体上下平移 —— 平移不改变倾斜方向。"
+        )
+        interactive = ["a", "c"]
+    elif family == "cubic":
+        note = ("三次函数图像呈 S 形，起伏由一阶导数决定，最多与 x 轴有三个交点。"
+                "拖动三个系数，观察它什么时候从「一个交点」变成「三个交点」。")
+        interactive = ["a", "b", "c"]
+    else:
+        if disc > 1e-9:
+            root_note = "抛物线与 x 轴有两个交点，Δ>0，方程有两个不同实根。"
+        elif abs(disc) <= 1e-9:
+            root_note = "抛物线与 x 轴相切，Δ=0，方程只有一个实根（重根）—— 这一点正是顶点。"
+        else:
+            root_note = "抛物线与 x 轴没有交点，Δ<0，方程没有实根。"
+        note = (
+            f"{root_note} 判别式 Δ = b² − 4ac = {disc:g}，"
+            f"对称轴 x = −b/(2a)。拖动 a 看开口方向与胖瘦，"
+            "拖动 b 看顶点左右平移，拖动 c 看整体上下平移。"
+        )
+        interactive = ["a", "b", "c"]
+    return build_artifact(
+        "function_plot",
+        f"函数图像：y = {_fmt_coef(a, b, c, family)}",
+        note,
+        family=family,
+        a=a, b=b, c=c,
+        show_roots=True,
+        show_vertex=True,
+        show_axis=True,
+        interactive=interactive,
+    )
+
+
 _RULES: tuple[tuple[str, re.Pattern[str], object], ...] = (
+    # 函数图像最优先：带系数的函数题经常同时出现「正态」「相关」等字样，
+    # 但学生真正要看的是那条曲线。
+    ("function_plot",
+     re.compile(r"二次函数|一元二次|抛物线"
+                r"|(一次函数|正比例函数)"
+                r"|(?:y|[fg]\s*\(\s*x\s*\))\s*=\s*[-+]?\s*[^，。；\s]*x", re.I),
+     _function_plot),
     # 具体误解优先
     ("ci_coverage", re.compile(
         r"置信区间.*(含义|理解|意味|覆盖|误解|解释|到底)"

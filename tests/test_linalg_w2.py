@@ -137,6 +137,10 @@ class TestQuadraticForm:
 
 
 class TestW2Tool:
+    def test_quadratic_expression_does_not_evaluate_python_calls(self):
+        with pytest.raises(ValueError, match="不支持函数或代码"):
+            quadratic_form(expression="Symbol('x')**2")
+
     def test_tool_jordan_and_qf(self):
         import asyncio
         async def _run():

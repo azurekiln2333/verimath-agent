@@ -1,0 +1,8 @@
+# Optional custom corpus. Its contents replace the image's default /corpus.
+services:
+  xiaoyi:
+    volumes:
+      - type: bind
+        source: "${VERIMATH_CORPUS_DIR:?Set VERIMATH_CORPUS_DIR to your corpus directory}"
+        target: /corpus
+        read_only: true

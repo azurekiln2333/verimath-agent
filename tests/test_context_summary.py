@@ -181,3 +181,72 @@ def test_maybe_summarize_context_noop_under_soft_cap(monkeypatch, tmp_path):
 def test_fire_and_forget_summary_safe_without_event_loop():
     # 同步上下文（无运行中的事件循环）下不应抛异常
     _fire_and_forget_summary("no-such-session")
+
+
+def test_clear_context_removes_persisted_summary(tmp_path):
+    path = tmp_path / "clear.db"
+    store = SessionStore(db_path=path)
+    store.set_summary("clear", "旧摘要")
+    store.append_turn("clear", "user", "旧问题")
+    store.clear_context("clear")
+    state = SessionStore(db_path=path).get_or_create("clear")
+    assert state.summary == "" and state.history == []
+
+
+def test_overlapping_summaries_do_not_remove_recent_messages(monkeypatch, tmp_path):
+    path = tmp_path / "overlap.db"
+    store = SessionStore(max_history_turns=1, db_path=path)
+    monkeypatch.setattr(main, "sessions", store)
+    for i in range(4):
+        store.append_turn("overlap", "user", str(i))
+
+    async def run():
+        started, release = asyncio.Event(), asyncio.Event()
+        fake = _FakeModelClient()
+        async def complete(*args, **kwargs):
+            fake.calls += 1
+            started.set()
+            await release.wait()
+            return "旧两条的摘要"
+        fake.complete = complete
+        monkeypatch.setattr(main, "model_client", fake)
+        first = asyncio.create_task(maybe_summarize_context("overlap"))
+        await started.wait()
+        await maybe_summarize_context("overlap")
+        release.set()
+        await first
+        assert fake.calls == 1
+
+    asyncio.run(run())
+    state = SessionStore(max_history_turns=1, db_path=path).get_or_create("overlap")
+    assert [t["content"] for t in state.history] == ["2", "3"]
+    assert state.summary == "旧两条的摘要"
+
+
+def test_summary_started_before_clear_cannot_restore_old_context(monkeypatch, tmp_path):
+    path = tmp_path / "stale.db"
+    store = SessionStore(max_history_turns=1, db_path=path)
+    monkeypatch.setattr(main, "sessions", store)
+    for i in range(3):
+        store.append_turn("stale", "user", str(i))
+
+    async def run():
+        started, release = asyncio.Event(), asyncio.Event()
+        fake = _FakeModelClient()
+        async def complete(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return "不应重新出现的旧摘要"
+        fake.complete = complete
+        monkeypatch.setattr(main, "model_client", fake)
+        task = asyncio.create_task(maybe_summarize_context("stale"))
+        await started.wait()
+        store.clear_context("stale")
+        store.append_turn("stale", "user", "新问题")
+        release.set()
+        await task
+
+    asyncio.run(run())
+    state = SessionStore(db_path=path).get_or_create("stale")
+    assert state.summary == ""
+    assert [t["content"] for t in state.history] == ["新问题"]

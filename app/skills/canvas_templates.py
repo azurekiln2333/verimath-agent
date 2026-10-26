@@ -24,24 +24,24 @@ from typing import Callable
 # ============================================================
 _BASE_CSS = r"""
 *{box-sizing:border-box}
-body{margin:0;font-family:'Inter',system-ui,-apple-system,sans-serif;color:#1b1c19;background:transparent}
-.card{width:720px;max-width:100%;padding:14px 16px;margin:0 auto}
-h3{margin:0 0 4px;font-size:16px;color:#2d5a27;font-family:'Libre Caslon Text',Georgia,serif;font-weight:600}
-.desc{font-size:12px;color:#42493e;margin:0 0 10px;line-height:1.55}
+body{margin:0;font-family:system-ui,'Microsoft YaHei',sans-serif;color:var(--vm-ink,#202124);background:transparent}
+.card{width:100%;max-width:100%;padding:14px 16px;margin:0 auto}
+h3{margin:0 0 4px;font-size:16px;color:var(--vm-accent,#363940);font-family:system-ui,'Microsoft YaHei',sans-serif;font-weight:600}
+.desc{font-size:12px;color:var(--vm-muted,#707277);margin:0 0 10px;line-height:1.55}
 .controls{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px;align-items:flex-end}
-.ctrl{display:flex;flex-direction:column;gap:2px;font-size:11px;color:#42493e;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace}
-.ctrl b{color:#2d5a27;font-weight:600}
-input[type=range]{width:150px;accent-color:#2d5a27;cursor:pointer;margin-top:2px}
-select{font-family:inherit;font-size:11px;border:1px solid #c2c9bb;border-radius:4px;padding:2px 4px;background:#fff;color:#1b1c19}
-.readout{font-size:11px;color:#2d5a27;font-family:'JetBrains Mono',monospace;background:#eef4ea;border:1px solid #c2c9bb;border-radius:4px;padding:2px 8px;font-weight:600}
-svg{display:block;width:100%;height:auto;background:#fff;border:1px solid #e3e3de;border-radius:6px}
-.legend{display:flex;gap:14px;font-size:11px;color:#42493e;margin-top:7px;flex-wrap:wrap}
+.ctrl{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--vm-muted,#707277);font-family:'JetBrains Mono',ui-monospace,Consolas,monospace}
+.ctrl b{color:var(--vm-accent,#363940);font-weight:600}
+input[type=range]{width:150px;accent-color:var(--vm-accent,#363940);cursor:pointer;margin-top:2px}
+select{font-family:inherit;font-size:11px;border:1px solid var(--vm-line,#e5e5e7);border-radius:4px;padding:2px 4px;background:var(--vm-bg,#fff);color:var(--vm-ink,#202124)}
+.readout{font-size:11px;color:var(--vm-accent,#363940);font-family:'JetBrains Mono',monospace;background:#eef4ea;border:1px solid var(--vm-line,#e5e5e7);border-radius:4px;padding:2px 8px;font-weight:600}
+svg{display:block;width:100%;height:auto;background:var(--vm-bg,#fff);border:1px solid #e3e3de;border-radius:6px}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--vm-muted,#707277);margin-top:7px;flex-wrap:wrap}
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .swatch{width:14px;height:3px;border-radius:2px;display:inline-block}
-.note{font-size:11px;color:#42493e;margin-top:8px;font-family:'JetBrains Mono',monospace;line-height:1.6}
+.note{font-size:11px;color:var(--vm-muted,#707277);margin-top:8px;font-family:'JetBrains Mono',monospace;line-height:1.6}
 .decision{font-size:12px;font-weight:600;padding:3px 9px;border-radius:4px;display:inline-block;margin-top:6px}
 .decision.reject{background:#fdecec;color:#ba1a1a;border:1px solid #edc4a7}
-.decision.accept{background:#eef4ea;color:#2d5a27;border:1px solid #bdedaa}
+.decision.accept{background:#eef4ea;color:var(--vm-accent,#363940);border:1px solid #bdedaa}
 """
 
 _JS_HELPERS = r"""
@@ -57,6 +57,12 @@ function val(id){return +document.getElementById(id).value;}
 """
 
 
+# 高度回传（与 /static/bridge.js 同协议的最小实现）。
+# 模板 HTML 可能被导出、被沙箱内联使用，所以这里不依赖外链脚本。
+_MINI_BRIDGE = ""  # The host injects one authoritative bridge after sanitization.
+
+
+
 def _html_doc(title: str, body: str, js: str) -> str:
     """组装完整 HTML 文档（内联 CSS/JS）。"""
     return (
@@ -64,7 +70,7 @@ def _html_doc(title: str, body: str, js: str) -> str:
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>"
         "<title>" + title + "</title><style>" + _BASE_CSS + "</style></head>"
         "<body><div class=\"card\">" + body + "</div>"
-        "<script>" + _JS_HELPERS + js + "</script></body></html>"
+        "<script>" + _JS_HELPERS + js + "</script>" + _MINI_BRIDGE + "</body></html>"
     )
 
 

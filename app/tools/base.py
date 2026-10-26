@@ -19,6 +19,7 @@ class ToolResult:
     content: str
     summary: dict[str, Any] = field(default_factory=dict)
     artifact_offer: dict[str, Any] | None = None
+    sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 @runtime_checkable

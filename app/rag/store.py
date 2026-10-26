@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import threading
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -41,7 +43,23 @@ DOMAIN_TERMS = (
     "Logistic",
     "时间序列",
     "贝叶斯",
+    "极坐标", "直角坐标", "球坐标", "柱坐标", "坐标变换", "换元", "雅可比",
+    "二重积分", "三重积分", "重积分", "定积分", "不定积分", "曲线积分", "曲面积分",
+    "积分限", "积分区域", "积分", "微分", "导数", "偏导数", "方向导数", "梯度",
+    "全微分", "泰勒", "极限", "连续", "收敛", "级数", "微分方程", "高斯积分",
+    "三角恒等式", "三角恒等", "三角变换", "倍角公式", "降幂公式", "三角函数",
+    "矩阵", "行列式", "特征值", "特征向量", "线性变换", "线性方程组", "向量空间",
+    "线性相关", "线性无关", "正交", "秩", "奇异值", "二次型", "正定",
+    "条件概率", "全概率", "独立性", "二项分布", "泊松分布", "指数分布", "均匀分布",
+    "高斯分布", "概率密度", "分布函数", "标准差", "最大似然", "极大似然", "最小二乘",
 )
+
+QUERY_ALIASES = {
+    "高斯分布": ("正态分布",), "正态分布": ("高斯分布",),
+    "三角恒等变形": ("三角恒等",), "三角变换": ("三角恒等",),
+    "Jacobian": ("雅可比",), "CLT": ("中心极限定理",),
+    "最大似然": ("极大似然",), "极大似然": ("最大似然",),
+}
 
 STOP_TERMS = {
     "什么",
@@ -71,7 +89,15 @@ STOP_TERMS = {
     "的",
     "吗",
     "呢",
+    "这一步", "这几步", "下一步", "上一步", "这里", "那里", "这样", "那样",
+    "这些", "那些", "它们", "其中", "刚才", "上面", "前面", "上述", "这个问题",
+    "得到", "得出", "要乘", "要除", "能不能", "能否", "能", "为啥", "为什么会",
+    "解释一下", "讲一讲", "讲解", "解释", "说明", "介绍", "理解", "推导一下",
+    "详细", "具体", "简单", "举例", "例子", "帮忙", "请", "一下", "继续", "然后",
+    "换个话题", "换一个话题", "另外一个问题", "接下来", "再问", "改问", "聊聊",
 }
+
+_ENGLISH_STOP_TERMS = {"what", "why", "how", "the", "is", "are", "of", "to", "and", "in", "this", "that", "explain"}
 
 DOC_TYPE_WEIGHTS = {
     "self_note": 1.35,
@@ -114,6 +140,7 @@ class RetrievedChunk:
     score: float
     metadata: dict[str, str]
     excerpt: str = ""
+    content_hash: str = ""
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -122,6 +149,7 @@ class RetrievedChunk:
             "score": self.score,
             "metadata": self.metadata,
             "excerpt": self.excerpt or self.text,
+            "content_hash": self.content_hash,
         }
 
 
@@ -134,20 +162,26 @@ class KeywordRetriever:
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
+        self._initialized = False
+        self._init_lock = threading.Lock()
 
     def init_db(self) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(_create_table_sql())
-            _ensure_schema(conn)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_course ON corpus_chunks(course)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_topic ON corpus_chunks(topic)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_doc_type ON corpus_chunks(doc_type)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_ingest_policy ON corpus_chunks(ingest_policy)")
-            # text_hash 索引：支撑 add_chunks 的定向去重查询，以及存量回填的快速判空
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_text_hash ON corpus_chunks(text_hash)")
-            # 一次性回填：老库升级到含 text_hash 列后，给空哈希行补算（索引让「无空行」时即时返回）
-            _backfill_text_hashes(conn)
+        with self._init_lock:
+            if self._initialized:
+                return
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._connect() as conn:
+                conn.execute(_create_table_sql())
+                _ensure_schema(conn)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_course ON corpus_chunks(course)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_topic ON corpus_chunks(topic)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_doc_type ON corpus_chunks(doc_type)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_ingest_policy ON corpus_chunks(ingest_policy)")
+                # text_hash 索引：支撑 add_chunks 的定向去重查询，以及存量回填的快速判空
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_corpus_text_hash ON corpus_chunks(text_hash)")
+                # 一次性回填：老库升级到含 text_hash 列后，给空哈希行补算（索引让「无空行」时即时返回）
+                _backfill_text_hashes(conn)
+            self._initialized = True
 
     def replace_chunks(self, chunks: Iterable[RawDocument]) -> int:
         self.init_db()
@@ -256,34 +290,38 @@ class KeywordRetriever:
     def search(self, query: str, limit: int = 4) -> list[RetrievedChunk]:
         self.init_db()
         terms = build_query_terms(query)
-        if not terms:
+        if not terms or limit <= 0:
             return []
+        # Rank all lexical matches once. An unordered per-word LIMIT used to hide
+        # later, more relevant notes; this local corpus needs no extra index service.
+        fields = ("text", "topic", "title", "course", "chapter")
+        where = " OR ".join(f"instr(lower({field}), ?) > 0" for _ in terms for field in fields)
         sql = """
             SELECT id, text, doc_id, title, course, chapter, topic, doc_type, language,
                    provenance, source, origin_path, source_url, license_status,
                    ingest_policy, quality_score
             FROM corpus_chunks
-            WHERE text LIKE ? OR topic LIKE ? OR title LIKE ? OR course LIKE ? OR chapter LIKE ?
-            LIMIT ?
-        """
-        candidate_limit = max(limit * 30, 50)
-        rows: dict[int, sqlite3.Row] = {}
+            WHERE
+        """ + where
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            for term in terms:
-                like = f"%{term}%"
-                for row in conn.execute(sql, (like, like, like, like, like, candidate_limit)):
-                    rows[row["id"]] = row
-        scored_rows = [
-            (score_row(row, terms), row)
-            for row in rows.values()
-            if score_row(row, terms) > 0
-        ]
+            rows = conn.execute(sql, [term.lower() for term in terms for _ in fields]).fetchall()
+        scored_rows = [(score_row(row, terms), row) for row in rows]
         scored_rows.sort(key=lambda item: (-item[0], item[1]["id"]))
+        selected = []
+        seen = set()
+        for score, row in scored_rows:
+            key = content_key(row["text"])
+            if score <= 0 or key in seen:
+                continue
+            seen.add(key)
+            selected.append((score, row))
+            if len(selected) >= limit:
+                break
         return [
             RetrievedChunk(
                 chunk_id=row["id"],
-                text=row["text"][:700],
+                text=build_excerpt(row["text"], terms, max_chars=700),
                 score=round(score, 4),
                 metadata={
                     "doc_id": row["doc_id"],
@@ -307,8 +345,9 @@ class KeywordRetriever:
                     ),
                 },
                 excerpt=build_excerpt(row["text"], terms),
+                content_hash=content_key(row["text"]),
             )
-            for score, row in scored_rows[:limit]
+            for score, row in selected
         ]
 
     def _connect(self) -> sqlite3.Connection:
@@ -358,25 +397,43 @@ class KeywordRetriever:
 
 
 def build_query_terms(query: str) -> list[str]:
-    normalized = normalize_text(query)
-    terms: set[str] = set()
-    lowered_query = normalized.lower()
-    for term in DOMAIN_TERMS:
-        if term.lower() in lowered_query:
-            terms.add(term)
+    normalized = normalize_text(query[:4000])
+    domain = domain_query_terms(normalized)
+    terms: set[str] = set(domain)
 
-    for token in re.findall(r"[A-Za-z][A-Za-z0-9_+\-]*|[0-9]+(?:\.[0-9]+)?", normalized):
-        if len(token) >= 2:
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9_+\-]*", normalized):
+        if len(token) >= 2 and token.lower() not in _ENGLISH_STOP_TERMS:
             terms.add(token)
 
     for block in re.findall(r"[\u4e00-\u9fff]+", normalized):
         for piece in split_chinese_block(block):
             terms.add(piece)
 
+    for alias, expansions in QUERY_ALIASES.items():
+        if alias.lower() in normalized.lower():
+            terms.update(expansions)
+            domain.extend(expansions)
     return sorted(
         (term for term in terms if len(term) >= 2 and term not in STOP_TERMS),
-        key=lambda value: (-len(value), value),
-    )
+        key=lambda value: (value not in domain, -len(value), value),
+    )[:24]
+
+
+def domain_query_terms(query: str) -> list[str]:
+    matches = [term for term in DOMAIN_TERMS if term.lower() in query.lower()]
+    return sorted((term for term in matches if not any(
+        term.lower() != other.lower() and term.lower() in other.lower() for other in matches
+    )), key=lambda value: (-len(value), value))
+
+
+def content_key(text: str) -> str:
+    """Ignore export formatting, but retain mathematical signs and numeric values."""
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"\[!(?:note|tip|info|warning|important|example)\]", "", text, flags=re.I)
+    text = re.sub(r"!\[\[([^\]]+)\]\]", r"图片:\1", text)
+    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", text)
+    return hashlib.sha256(re.sub(r"\s+", "", text).encode()).hexdigest()
 
 
 def normalize_text(text: str) -> str:
@@ -391,6 +448,16 @@ def build_excerpt(text: str, terms: list[str], max_chars: int = 240) -> str:
     text = (text or "").strip()
     if not text:
         return ""
+    if len(text) <= max_chars:
+        return text
+    # Center the window on the strongest term, including a hit deep inside a
+    # single long sentence. Always preserve that hit before adding context.
+    lowered_text = text.lower()
+    hit_pos = next((lowered_text.find(term.lower()) for term in terms if term.lower() in lowered_text), 0)
+    start = max(0, hit_pos - max_chars // 4)
+    end = min(len(text), start + max_chars)
+    start = max(0, end - max_chars)
+    text = text[start:end]
     sentences = [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()]
     if not sentences:
         return text[:max_chars]
@@ -421,15 +488,20 @@ def build_excerpt(text: str, terms: list[str], max_chars: int = 240) -> str:
 def split_chinese_block(block: str) -> set[str]:
     pieces: set[str] = set()
     queue = [block]
-    for stop_word in STOP_TERMS:
+    for stop_word in sorted(STOP_TERMS, key=lambda word: (-len(word), word)):
         next_queue: list[str] = []
         for item in queue:
             next_queue.extend(part for part in item.split(stop_word) if part)
         queue = next_queue
     for item in queue:
+        domain = domain_query_terms(item)
+        if domain:
+            pieces.update(domain)
+            # Known concepts are more useful than arbitrary fragments around them.
+            continue
         if len(item) >= 2:
             pieces.add(item)
-        if len(item) > 8:
+        if len(item) > 4:
             for size in (6, 5, 4, 3):
                 for start in range(0, len(item) - size + 1):
                     piece = item[start : start + size]
@@ -457,6 +529,8 @@ def score_row(row: sqlite3.Row, terms: list[str]) -> float:
                 if index <= 1:
                     topic_match_score += 0.8 * length_boost
     quality_score = _coerce_float(row["quality_score"], default=0.0) * 3.0
+    if not lexical_score:
+        return 0.0
     doc_type_weight = DOC_TYPE_WEIGHTS.get(str(row["doc_type"]), 0.4)
     excerpt_quality = _excerpt_quality(str(row["text"]), terms)
     hold_penalty = -2.0 if str(row["ingest_policy"]) == "hold" else 0.0

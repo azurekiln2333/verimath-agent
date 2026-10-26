@@ -1,0 +1,13 @@
+# Admit only runtime code, dependency metadata and the curated default corpus.
+**
+!pyproject.toml
+!app/
+!app/**
+!scripts/
+!scripts/**
+!corpus/
+!corpus/curated/
+!corpus/curated/public_main/
+!corpus/curated/public_main/**
+**/__pycache__/
+**/*.pyc

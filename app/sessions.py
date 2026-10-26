@@ -26,10 +26,12 @@ class SessionState:
     updated_at: float = field(default_factory=time.time)
     history: list[dict[str, Any]] = field(default_factory=list)
     cancelled_tasks: set[str] = field(default_factory=set)
-    answer_style: str = "rigorous"
+    answer_style: str = "concise"
     use_model: bool = True
     # 滚动摘要：被挤出窗口的旧轮次压缩成一段文字，作为多轮上下文的首条 system 消息。
     summary: str = ""
+    context_revision: int = 0
+    summary_in_progress: bool = False
 
     def touch(self) -> None:
         self.updated_at = time.time()
@@ -61,7 +63,7 @@ class SessionStore:
                     session_id TEXT PRIMARY KEY,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
-                    answer_style TEXT NOT NULL DEFAULT 'rigorous',
+                    answer_style TEXT NOT NULL DEFAULT 'concise',
                     use_model INTEGER NOT NULL DEFAULT 1,
                     summary TEXT NOT NULL DEFAULT ''
                 )
@@ -111,7 +113,7 @@ class SessionStore:
             if row is None:
                 return None
             turns = conn.execute(
-                "SELECT role, content, ts FROM session_turns WHERE session_id = ?"
+                "SELECT id, role, content, ts FROM session_turns WHERE session_id = ?"
                 " ORDER BY seq ASC", (session_id,),
             ).fetchall()
         columns = row.keys()
@@ -123,7 +125,7 @@ class SessionStore:
             use_model=bool(row["use_model"]),
             summary=row["summary"] if "summary" in columns else "",
         )
-        history = [{"role": t["role"], "content": t["content"], "ts": t["ts"]} for t in turns]
+        history = [{"role": t["role"], "content": t["content"], "ts": t["ts"], "turn_id": t["id"]} for t in turns]
         # 与 append_turn 硬上限一致：保留 max_history_turns*4 条，超出部分由摘要压缩，
         # 而非加载时静默丢弃（否则重启后待摘要的软上限区会丢失）。
         state.history = history[-self.max_history_turns * 4 :]
@@ -155,7 +157,8 @@ class SessionStore:
     def append_turn(self, session_id: str, role: str, content: str) -> None:
         state = self.get_or_create(session_id)
         ts = time.time()
-        state.history.append({"role": role, "content": content, "ts": ts})
+        turn = {"role": role, "content": content, "ts": ts, "turn_id": uuid.uuid4().hex}
+        state.history.append(turn)
         # 软上限 max_history_turns*2：超出部分交给 maybe_summarize_context 异步压缩成 summary，
         # 不立即丢弃，保留待压缩的原文。硬上限 max_history_turns*4 兜底（模型关闭/摘要失败时），
         # 丢最旧的，防止内存 history 无限增长。
@@ -169,11 +172,12 @@ class SessionStore:
                     "SELECT COALESCE(MAX(seq), -1) + 1 FROM session_turns WHERE session_id = ?",
                     (session_id,),
                 ).fetchone()[0]
-                conn.execute(
+                cursor = conn.execute(
                     "INSERT INTO session_turns (session_id, seq, role, content, ts)"
                     " VALUES (?, ?, ?, ?, ?)",
                     (session_id, seq, role, content, ts),
                 )
+                turn["turn_id"] = cursor.lastrowid
             self._persist_session_row(state)
 
     def set_preferences(self, session_id: str, *, answer_style: str | None = None,
@@ -200,6 +204,8 @@ class SessionStore:
         state = self.get_or_create(session_id)
         state.history.clear()
         state.cancelled_tasks.clear()
+        state.summary = ""
+        state.context_revision += 1
         state.touch()
         if self.db_path is not None:
             with self._connect() as conn:
@@ -210,8 +216,28 @@ class SessionStore:
         """写入/更新会话的滚动摘要（被挤出窗口的旧轮次压缩文本）。"""
         state = self.get_or_create(session_id)
         state.summary = summary
+        state.context_revision += 1
         state.touch()
         self._persist_session_row(state)
+
+    def commit_summary(self, session_id: str, revision: int, prefix: list[dict[str, Any]], summary: str) -> bool:
+        """Commit only the exact snapshot summarized, atomically with its context checkpoint."""
+        state = self.get_or_create(session_id)
+        if state.context_revision != revision or state.history[:len(prefix)] != prefix:
+            return False
+        now = time.time()
+        if self.db_path is not None:
+            ids = [turn["turn_id"] for turn in prefix]
+            with self._connect() as conn:
+                conn.execute("UPDATE sessions SET summary=?,updated_at=? WHERE session_id=?", (summary, now, session_id))
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    conn.execute(f"DELETE FROM session_turns WHERE session_id=? AND id IN ({placeholders})", (session_id, *ids))
+        state.summary = summary
+        state.history = state.history[len(prefix):]
+        state.context_revision += 1
+        state.touch()
+        return True
 
     def pop_oldest_turns(self, session_id: str, count: int) -> list[dict[str, Any]]:
         """从内存 history 头部取出并移除最旧的 count 条轮次（滚动摘要压缩成功后调用）。
@@ -224,6 +250,7 @@ class SessionStore:
         if not popped:
             return []
         state.history = state.history[count:]
+        state.context_revision += 1
         state.touch()
         if self.db_path is not None:
             with self._connect() as conn:

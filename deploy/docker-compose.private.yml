@@ -1,0 +1,9 @@
+# Optional private-registry override. REGISTRY_AUTH_FILE must be a real file.
+# Use a dedicated, read-only registry account for this Docker config.
+services:
+  watchtower:
+    volumes:
+      - type: bind
+        source: "${REGISTRY_AUTH_FILE:?Set REGISTRY_AUTH_FILE to a Docker config.json}"
+        target: /config.json
+        read_only: true

@@ -1,0 +1,13 @@
+# Explicit development override. Production never needs the source checkout.
+services:
+  xiaoyi:
+    image: verimath-agent:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+
+  watchtower:
+    profiles: [auto-update]

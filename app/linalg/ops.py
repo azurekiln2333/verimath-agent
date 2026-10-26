@@ -785,9 +785,47 @@ def _sym_matrix_from_expression(expression: str) -> tuple[FracMatrix, list[str]]
 
     只接受齐次二次型（所有项总次数为 2）。f = xᵀAx 中 A = Hessian(f)/2。
     """
+    import ast
     import sympy
-    expr = sympy.sympify(str(expression))
+
+    text = str(expression)
+    if len(text) > 500:
+        raise ValueError("二次型表达式过长")
+    try:
+        tree = ast.parse(text, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError("请输入标准代数表达式") from exc
+
+    def convert(node):
+        if isinstance(node, ast.Expression):
+            return convert(node.body)
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            if len(str(node.value)) > 40:
+                raise ValueError("数值过长")
+            return sympy.Rational(str(node.value))
+        if isinstance(node, ast.Name) and not node.id.startswith("_") and len(node.id) <= 32:
+            return sympy.Symbol(node.id)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = convert(node.operand)
+            return -value if isinstance(node.op, ast.USub) else value
+        if isinstance(node, ast.BinOp):
+            a, b = convert(node.left), convert(node.right)
+            if isinstance(node.op, ast.Add):
+                return a + b
+            if isinstance(node.op, ast.Sub):
+                return a - b
+            if isinstance(node.op, ast.Mult):
+                return a * b
+            if isinstance(node.op, ast.Div):
+                return a / b
+            if isinstance(node.op, ast.Pow) and b.is_Integer and abs(b) <= 8:
+                return a ** b
+        raise ValueError("只支持数值、变量和代数运算，不支持函数或代码")
+
+    expr = convert(tree)
     syms = sorted(expr.free_symbols, key=lambda s: s.name)
+    if len(syms) > 8:
+        raise ValueError("最多支持 8 个变量")
     if not syms:
         raise ValueError("表达式没有变量")
     poly = sympy.Poly(expr, *syms)

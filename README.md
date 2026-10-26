@@ -1,4 +1,20 @@
-# 小艺 A2A 数理统计学习导师 POC
+# VeriMath Agent · 数学与统计学习导师
+
+## 镜像部署与自动更新
+
+GitHub 和 CNB 按版本标签构建并发布镜像。
+服务器使用 `docker-compose.yml` 拉取镜像。
+默认同时启动 Watchtower，每 10 分钟检查更新。
+镜像自带 Python、静态页面和默认知识库语料。
+首次启动会自动建立空数据库的知识索引。
+
+完整步骤见 [镜像部署文档](deploy/README.md)。
+服务器只需 Compose 文件、`.env.docker` 和数据目录。
+源码构建使用单独的 `docker-compose.build.yml`。
+
+技术栈：Python 3.11+、FastAPI、Uvicorn、SQLite、SymPy，
+以及原生 HTML、CSS 和 JavaScript。
+大模型通过兼容 Chat Completions 的 HTTP API 接入。
 
 这是一个本地验证用的云 A2A Remote Agent 脚手架，目标是先跑通协议、会话、流式回答、取消任务、清上下文和白名单 RAG 采集，再迁移到公网 HTTPS 接入小艺开放平台。
 
@@ -16,7 +32,7 @@
 先创建本地虚拟环境并安装依赖。不要全局安装。
 
 ```powershell
-cd E:\windows_ext\Desktop\华为智能体\xiaoyi-a2a-stat-tutor
+cd xiaoyi-a2a-stat-tutor
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[test]"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8765
@@ -62,7 +78,7 @@ http://127.0.0.1:8765/dashboard
 .\.venv\Scripts\python.exe scripts\run_eval.py
 ```
 
-## 可选模型配置
+## 模型配置
 
 默认模型配置为 DeepSeek 官方 OpenAI-compatible 接口：
 
@@ -73,7 +89,7 @@ $env:DEEPSEEK_API_KEY = "只在本机终端里填写，不写入文件"
 $env:MODEL_ENABLED = "true"
 ```
 
-当前 POC 默认使用离线规则导师，确保没有密钥也能跑通 A2A 协议。只有 `MODEL_ENABLED=true` 且提供 `MODEL_API_KEY` 或 `DEEPSEEK_API_KEY` 时，才会调用真实模型。接真实模型前，先通过评测集验证成本、稳定性和内容安全。
+默认启用模型：配置 `MODEL_API_KEY` 或 `DEEPSEEK_API_KEY` 后，普通聊天会调用模型，由模型决定是否使用工具。需要离线调试时可显式设置 `MODEL_ENABLED=false`，或关闭面板设置中的「使用模型」。未配置密钥或模型调用失败时保留规则回答作为降级；自动化测试单独关闭真实模型调用。
 
 项目启动时会自动读取本地 `.env`，但 `.env` 已被 `.gitignore` 排除，不要提交密钥。
 
@@ -92,7 +108,7 @@ Copy-Item .env.example .env
 当前建议的本地白名单示例：
 
 ```env
-CORPUS_WHITELIST=E:\windows_ext\Desktop\个人\学习\概率论;E:\windows_ext\Desktop\个人\学习\数分高代;E:\windows_ext\Desktop\个人\学习\高代数分;E:\windows_ext\Desktop\华为智能体\xiaoyi-a2a-stat-tutor\corpus\curated\public_main
+CORPUS_WHITELIST=corpus/curated/public_main
 ```
 
 `scripts\build_corpus.py` 默认只索引 `main,public` 两类 `ingest_policy`。如果要单独构建题卷副库，可显式指定：

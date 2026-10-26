@@ -47,24 +47,25 @@ def test_all_visualization_scripts_exist_on_disk() -> None:
 
 def test_referenced_static_assets_all_exist() -> None:
     """把面板里所有 /static/ 引用都核对一遍。"""
-    refs = set(re.findall(r'src="/static/([^"]+)"', PANEL_HTML))
+    # 引用可能带内容指纹（?v=hash），核对磁盘前先剥掉查询串
+    refs = set(re.findall(r'src="/static/([^"?]+)', PANEL_HTML))
     assert refs, "面板应引用静态资源"
     for ref in refs:
         assert (_ROOT / "app" / "static" / ref).is_file(), f"引用了不存在的资源: {ref}"
 
 
-def test_artifacts_rendered_on_meta_not_only_final() -> None:
-    """图必须在 meta 阶段就画出来。
-
-    只在 final 画的话，学生要等整段 LLM 文本流完才看到图 ——
-    而图恰恰不依赖那段文本。
-    """
+def test_visualizations_wait_for_complete_answer_and_user_action() -> None:
+    """完整回答结束后提出候选，点击才启动独立任务。"""
     js = _panel_js()
     meta_block = js[
         js.index("if (evt.event === 'meta')"):
         js.index("} else if (evt.event === 'delta')")
     ]
-    assert "renderArtifacts" in meta_block, "meta 阶段应渲染 artifacts"
+    assert "renderArtifacts" not in meta_block
+    assert "data.visualization_offers" in js
+    tasks = (_ROOT / "app/static/artifact-tasks.js").read_text(encoding="utf-8")
+    assert "action.addEventListener('click'" in tasks
+    assert "post('/api/panel/artifact-jobs'" in tasks
 
 
 def test_artifact_host_is_outside_the_streaming_bubble() -> None:
@@ -72,13 +73,16 @@ def test_artifact_host_is_outside_the_streaming_bubble() -> None:
 
     流式阶段用 pending.textContent = acc 反复重写气泡内容，
     图若挂在气泡内会被每个 token 抹掉。
+    现在它挂在「消息列」的伴随区（.msg-companion → .artifact-host）里：
+    既不在气泡内，也和正文同列同宽，不再和正文分家。
     """
     js = _panel_js()
-    assert "const artifactHost = document.createElement('div')" in js
-    assert "renderArtifacts(evt.data.artifacts, artifactHost)" in js
-    # 断言容器直接挂在消息列表上，而不是 pending 气泡里
-    assert "messages.appendChild(artifactHost)" in js
+    assert "function ensureCompanion(col)" in js
+    assert "const artifactHost = ensureCompanion(column)" in js
+    assert "renderArtifactButton(artifactHost, offer)" in js
     assert "pending.appendChild(artifactHost)" not in js
+    # 流式重写只发生在气泡本身
+    assert "pending.textContent = acc" in js
 
 
 def test_artifact_rendering_is_idempotent() -> None:

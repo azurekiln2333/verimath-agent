@@ -90,7 +90,8 @@ def test_planner_specs_match_js_control_ranges(tmp_path: Path) -> None:
 
     payload = []
     for rule_name, _pattern, factory in _RULES:
-        spec = factory("")
+        # 函数图需要明确的函数，不能再靠空输入隐式兜底成 y=x²。
+        spec = factory("y=x^2" if rule_name == "function_plot" else "")
         payload.append({"rule": rule_name, "spec": spec.as_dict()})
     assert payload, "应至少有一条规则"
 

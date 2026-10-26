@@ -18,6 +18,9 @@ test = [
     "pytest>=8,<9",
     "respx>=0.21,<1",
 ]
+browser = [
+    "playwright>=1.48,<2",
+]
 load = [
     "locust>=2.29,<3",
 ]

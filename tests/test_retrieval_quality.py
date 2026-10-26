@@ -28,9 +28,11 @@ def test_clean_drops_repeated_headers_and_page_numbers():
     assert "有意义的内容" in cleaned
 
 
-def test_citation_instruction_no_sources_forces_disclaimer():
+def test_citation_instruction_distinguishes_search_miss_from_absent_coverage():
     rule = citation_instruction([])
-    assert "本地资料未覆盖" in rule
+    assert "本地资料未覆盖" not in rule
+    assert "检索工具" in rule or "检索工具补查" in rule
+    assert "若最终仍无相关来源" in rule
     assert "不得编造引用编号" in rule
 
 

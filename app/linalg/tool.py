@@ -76,17 +76,20 @@ class LinalgStepSolveTool:
                         },
                         "matrix": {
                             "type": "array",
-                            "items": {"type": "array", "items": {}},
+                            "minItems": 1, "maxItems": 8,
+                            "items": {"type": "array", "minItems": 1, "maxItems": 8, "items": {}},
                             "description": "矩阵，行优先二维数组，元素可为数字或 \"a/b\" 分数字符串。"
                                            "quadratic_form 时给二次型的对称矩阵",
                         },
                         "expression": {
                             "type": "string",
+                            "maxLength": 500,
                             "description": "仅在 operation=quadratic_form 时可选：二次型表达式（Python 语法，"
                                            "如 \"x**2 + 2*x*y + y**2\"），与 matrix 二选一",
                         },
                         "b": {
                             "type": "array",
+                            "maxItems": 8,
                             "items": {},
                             "description": "仅在 operation=solve 时需要：右端常数列",
                         },
@@ -99,6 +102,21 @@ class LinalgStepSolveTool:
     async def run(self, operation: str, matrix: list[list[Any]] | None = None,
                   expression: str | None = None, b: list[Any] | None = None,
                   **_: Any) -> ToolResult:
+        from app.bounded_compute import run_compute
+
+        if matrix is not None:
+            if not 1 <= len(matrix) <= 8 or any(not 1 <= len(row) <= 8 for row in matrix):
+                raise ValueError("逐步计算最多支持 8×8 矩阵")
+            if any(len(str(value)) > 80 for row in matrix for value in row):
+                raise ValueError("矩阵元素过长，请简化分数")
+        if expression and len(expression) > 500:
+            raise ValueError("二次型表达式请控制在 500 字以内")
+        result = await run_compute("linalg", {"operation": operation, "matrix": matrix,
+                                             "expression": expression, "b": b})
+        return ToolResult(**result)
+
+    async def _run_inline(self, operation: str, matrix: list[list[Any]] | None = None,
+                          expression: str | None = None, b: list[Any] | None = None) -> ToolResult:
         if operation not in _OPERATIONS:
             return ToolResult(
                 content=f"未知算子 {operation}。可用：{', '.join(_OPERATIONS)}",

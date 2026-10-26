@@ -60,7 +60,11 @@ class Settings:
         default_factory=lambda: os.getenv("MODEL_API_KEY", os.getenv("DEEPSEEK_API_KEY", ""))
     )
     model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "deepseek-v4-flash"))
-    model_enabled: bool = field(default_factory=lambda: _env_bool("MODEL_ENABLED"))
+    # 可独立指定视觉模型；留空时复用已验证支持图片的聊天模型与同一 API。
+    ocr_model_name: str = field(default_factory=lambda: os.getenv("OCR_MODEL_NAME", "").strip())
+    model_enabled: bool = field(default_factory=lambda: _env_bool("MODEL_ENABLED", default=True))
+    model_max_output_tokens: int = field(default_factory=lambda: int(os.getenv("MODEL_MAX_OUTPUT_TOKENS", "8192")))
+    agent_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT_SECONDS", "180")))
     # DeepSeek 思考模式：默认开启。reasoning_content 与 content 同级返回，
     # 工具调用轮次需把 reasoning_content 回传给 API（否则 400）。
     model_thinking: bool = field(default_factory=lambda: _env_bool("MODEL_THINKING", default=True))

@@ -208,6 +208,51 @@ class EffectSizeParams(_Base):
 
 # ----------------------------------------------------------------------- 注册表
 
+class FunctionPlotParams(_Base):
+    """函数图像：一次 / 二次 / 幂 / 指数等，可叠加另一条曲线做对比。
+
+    初中到大学一年级的"函数与方程"通用图。二次函数额外标顶点、对称轴与
+    判别式 —— 这三样是学生最容易只背结论、不看图的点。
+    """
+
+    family: Literal["linear", "quadratic", "cubic", "power", "exponential", "log"]
+    a: float = 1.0
+    b: float = 0.0
+    c: float = 0.0
+    domain: list[float] | None = None
+    compare: list[dict[str, Any]] = Field(default_factory=list)
+    show_roots: bool = True
+    show_vertex: bool = True
+    show_axis: bool = True
+    x_min: float | None = None
+    x_max: float | None = None
+    interactive: list[str] = Field(default_factory=list)
+
+    @field_validator("domain")
+    @classmethod
+    def _domain_pair(cls, v: list[float] | None) -> list[float] | None:
+        if v is None:
+            return v
+        if len(v) != 2 or not v[0] < v[1]:
+            raise ValueError("domain 必须是 [下限, 上限] 且下限 < 上限")
+        return v
+
+    @field_validator("compare")
+    @classmethod
+    def _compare_shape(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(v) > 3:
+            raise ValueError("最多叠加 3 条对比曲线")
+        for i, item in enumerate(v):
+            for key in ("a", "b", "c"):
+                if key in item and not isinstance(item[key], (int, float)):
+                    raise ValueError(f"compare[{i}].{key} 必须是数值")
+            if item.get("family") and item["family"] not in {
+                "linear", "quadratic", "cubic", "power", "exponential", "log"
+            }:
+                raise ValueError(f"compare[{i}].family 不支持")
+        return v
+
+
 WIDGET_REGISTRY: dict[str, type[_Base]] = {
     "distribution_explorer": DistributionExplorerParams,
     "hypothesis_test": HypothesisTestParams,
@@ -217,6 +262,7 @@ WIDGET_REGISTRY: dict[str, type[_Base]] = {
     "scatter_regression": ScatterRegressionParams,
     "data_plot": DataPlotParams,
     "effect_size": EffectSizeParams,
+    "function_plot": FunctionPlotParams,
 }
 
 # 每个 widget 的一句话用途 + 何时该选它。会拼进系统提示词，
@@ -230,6 +276,8 @@ WIDGET_PURPOSE: dict[str, str] = {
     "scatter_regression": "散点 + 拟合线。讲相关、回归、相关不等于因果时用（需要用户给出数据）。",
     "data_plot": "画原始数据的直方图/箱线图。用户给了数据、需要先看分布形状时用。",
     "effect_size": "并排比较多个效应量及其 CI。强调“别只看 p 值”时用。",
+    "function_plot": "画一次/二次函数图像，标出零点、顶点、对称轴与判别式。"
+                     "学生问函数图像、方程解的个数、最值、抛物线与 x 轴交点时用。",
 }
 
 

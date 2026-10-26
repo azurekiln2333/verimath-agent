@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import re
+import logging
+from html.parser import HTMLParser
 from typing import Any
 
 from app.model_client import ModelMessage, OpenAICompatibleClient
@@ -28,16 +30,24 @@ from app.skills.canvas_templates import (
 _MAX_HTML_LEN = 200_000
 
 _SYSTEM_PROMPT = (
-    "你是统计可视化组件工程师。根据需求生成一个自包含的 HTML 可视化组件，"
+    "你是数学与统计可视化组件工程师。根据需求生成一个自包含的 HTML 可视化组件，"
     "用于帮助统计学本科生建立直觉。\n\n"
     "硬性要求：\n"
     "1. 输出一个完整的 HTML 文档（<html>...<style>...<body>...<script>...），所有 CSS/JS 必须内联，"
     "不得引用任何外部资源（无 <link>、无 <script src>、无外链图片/字体）。\n"
     "2. 可用 SVG、<canvas>、原生 JS；不得使用任何第三方库（无 d3/chart.js/three 等）。\n"
-    "3. 适配 720px 宽容器，高度自适应（建议 320-480px）。背景透明，文字用 #1b1c19，主色 #2d5a27。\n"
-    "4. 必须可交互：用滑块/按钮让用户改变参数并实时看到变化。这是核心价值。\n"
-    "5. 数学公式用纯文本或 SVG 绘制，不要依赖 KaTeX/MathJax（iframe 内没有这些库）。\n"
-    "6. 代码要稳健：边界值不报错，参数变化即时重绘。\n\n"
+    "3. 适配 320-1100px 可变宽容器，高度由内容决定，不用 100vh 或固定大高度。背景透明，中文无衬线字体，文字用 var(--vm-ink,#242a27)，主色 var(--vm-accent,#365b46)，背景 var(--vm-bg,#fdfdfb)。统一浅灰边框、12px圆角，避免渐变背景与大装饰标题。\n"
+    "绘图区高度优先280–360px，手机220–280px，不按整屏宽度铺成巨大的正方形。坐标等比例通过留白实现；把主要参数放在图上方或紧邻图，使打开卡片就能操作。\n"
+    "4. 必须可交互：用滑块/按钮让用户改变参数并实时看到变化。可变参数使用带标签的原生 input/select；"
+    "若有拖动点，提供坐标输入控件并与拖动双向同步，让键盘和触屏也能操作，宿主才能恢复参数。\n"
+    "5. 数学公式用易读Unicode或 SVG 绘制，不要显示LaTeX源码、反引号或代码字体，不要依赖 KaTeX/MathJax（iframe 内没有这些库）。\n"
+    "6. 代码要稳健：边界值不报错，参数变化即时重绘。用 ResizeObserver 监听内容容器宽度重绘 canvas，同时调整像素分辨率。数据不足时标注示例数据。不要自行发送高度消息，由宿主注入的桥接脚本统一测量。\n\n"
+    "ResizeObserver 回调只处理宽度变化，宽度未变立即返回，用 requestAnimationFrame 合并重绘，避免在观察回调内循环修改尺寸。"
+    "7. 优先解决本轮学生的具体困惑，不把所有知识点堆到一张图。几何坐标须等比例，标清点、向量及位移的角色。"
+    "竖直切线用隐式直线表示；零向量的夹角未定义。用法向量与位移点积解释切线时，测试点Q必须能在平面自由移动，"
+    "不能限制在原曲线上，否则无法展示切线上的其他点与点积的正负。曲线上的点与切线测试点角色不同，若同时出现要用不同符号。"
+    "坐标控件输入的值应忠实保留，不能未经说明投影或吸附回曲线。换元中面积缩放用雅可比绝对值，"
+    "扇形或小平行四边形对面积元的解释需标明是局部近似，不能把有限块近似说成精确等式。\n\n"
     "输出格式（严格）：先一行 `TITLE: 标题`，再一行 `CAPTION: 说明`，"
     "然后一个 ```html 代码块，其余什么都不要输出。"
 )
@@ -60,9 +70,7 @@ def _sanitize_html(html: str) -> str:
     # 移除 @import 与 url() 外链
     html = re.sub(r"@import\s+[^;]+;", "", html, flags=re.IGNORECASE)
     html = re.sub(r"url\(\s*['\"]?https?://[^)]+\)", "none", html, flags=re.IGNORECASE)
-    # 移除内联事件中对 parent/top/document.cookie/fetch 的访问（iframe 沙箱本就隔离，双保险）
-    html = re.sub(r"parent\.", "window.", html)
-    html = re.sub(r"top\.", "window.", html)
+    # 跨域访问由宿主的 sandbox 与 CSP 限制，不用字符串替换破坏合法 JavaScript。
     return html
 
 
@@ -91,6 +99,39 @@ def _extract(html_doc: str) -> tuple[str, str, str] | None:
     return title, caption, html
 
 
+class _DocumentShape(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.opened: set[str] = set()
+        self.closed: set[str] = set()
+        self.scripts = 0
+
+    def handle_starttag(self, tag, attrs):
+        self.opened.add(tag)
+        if tag == "script":
+            self.scripts += 1
+
+    def handle_endtag(self, tag):
+        self.closed.add(tag)
+        if tag == "script":
+            self.scripts -= 1
+
+
+def validate_canvas(spec: dict[str, Any]) -> dict[str, Any]:
+    """Canvas has an HTML contract, separate from parameterized native widgets."""
+    html = spec.get("html")
+    if spec.get("kind") != "html_canvas" or not isinstance(html, str) or not html.strip() or len(html) > _MAX_HTML_LEN:
+        raise ValueError("未生成有效的 HTML Canvas")
+    shape = _DocumentShape()
+    shape.feed(html)
+    if not {"html", "body"} <= shape.opened & shape.closed or shape.scripts != 0:
+        raise ValueError("HTML 文档未完整闭合，请重新生成完整组件")
+    return {**spec, "html": _sanitize_html(html),
+            "title": str(spec.get("title") or "交互式可视化")[:120],
+            "caption": str(spec.get("caption") or "模型生成的交互式示意")[:600],
+            "height": max(120, min(1000, int(spec.get("height", 420))))}
+
+
 def _template_fallback(tpl_key: str, query: str) -> dict[str, Any] | None:
     """模板兜底：模型不可用/失败时，用预制模板 HTML 构造 spec。失败返回 None。"""
     html = get_template_html(tpl_key, query)
@@ -109,6 +150,7 @@ def _template_fallback(tpl_key: str, query: str) -> dict[str, Any] | None:
         "html": html,
         "height": 420,
         "fallback_template": tpl_key,
+        "generation_source": "template",
     }
 
 
@@ -134,28 +176,34 @@ async def _model_generate(
         ModelMessage(role="system", content=system),
         ModelMessage(role="user", content=user),
     ]
-    try:
-        # 禁用思考模式：HTML 代码生成不需要深度推理，且对延迟敏感（思考链会让
-        # 非流式 complete 拖到 100s+ 甚至超时）。temperature=0.2 保证生成稳定。
-        raw = await model_client.complete(
-            messages, response_format=None, thinking=False, temperature=0.2
-        )
-    except Exception:
-        return None
-    parsed = _extract(raw or "")
-    if parsed is None:
-        return None
-    title, caption, html = parsed
-    html = _sanitize_html(html)
-    if not html or len(html) > _MAX_HTML_LEN:
-        return None
-    return {
-        "kind": "html_canvas",
-        "title": title,
-        "caption": caption,
-        "html": html,
-        "height": 420,
-    }
+    for attempt in range(2):
+        try:
+            raw = await model_client.complete(
+                messages, response_format=None, thinking=False, temperature=0.2,
+                timeout=90 if attempt == 0 else 60,
+            )
+        except RuntimeError as exc:
+            if str(exc) != "model_output_incomplete":
+                return None
+            raw = ""
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Canvas model request failed: %s (status=%s)",
+                type(exc).__name__, getattr(getattr(exc, "response", None), "status_code", None))
+            return None
+        parsed = _extract(raw or "")
+        try:
+            if parsed is None:
+                raise ValueError("未收到完整 HTML 文档")
+            title, caption, html = parsed
+            return validate_canvas({"kind": "html_canvas", "title": title, "caption": caption,
+                "html": html, "height": 420, "generation_source": "model"})
+        except ValueError as exc:
+            if attempt == 0:
+                # One bounded repair for malformed output; network failures remain user-retryable.
+                messages.append(ModelMessage(role="user", content=(
+                    f"上次输出未通过完整性检查：{exc}。请根据原需求重新生成更精简的完整文档。"
+                    "减少装饰和说明，保留核心交互，务必闭合 script、body 和 html。仍按 TITLE/CAPTION/html 代码块格式输出。")))
+    return None
 
 
 async def build(

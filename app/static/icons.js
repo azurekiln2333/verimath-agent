@@ -10,6 +10,12 @@
 
   // name → 内部 <path>（可能多条，用 ; 分隔）。全部 24×24 viewBox。
   var P = {
+    add: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
+    chevron_left: 'M14 6l-6 6 6 6 1.41-1.41L10.83 12l4.58-4.59z',
+    grid_view: 'M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h8v8h-8v-8zm2 2v4h4v-4h-4z',
+    arrow_upward: 'M11 20V7.83l-5.59 5.58L4 12l8-8 8 8-1.41 1.41L13 7.83V20z',
+    camera: 'M9 3 7 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3l-2-2H9zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+    image: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v14h14V5H5zm2 11 3-4 2 3 3-5 3 6H7zm1-9a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
     chat: 'M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z',
     developer_board: 'M22 9V7h-2V5c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2v-2h-2V9h2zm-4 10H4V5h14v14zM9 8h2v2H9V8zm0 4h2v2H9v-2zm-2 0H5v-2h2v2zm0-4H5V8h2v2zm6 8H9v-2h4v2zm0-4h-2v-2h2v2zm0-4h-2V8h2v2zm2 4v-2h2v2h-2z',
     tune: 'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z',

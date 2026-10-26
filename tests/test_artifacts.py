@@ -34,6 +34,7 @@ _VALID = {
     "effect_size": {
         "items": [{"label": "A", "estimate": 0.5, "ci_low": 0.1, "ci_high": 0.9}]
     },
+    "function_plot": {"family": "quadratic", "a": 1, "b": -2, "c": -3},
 }
 
 

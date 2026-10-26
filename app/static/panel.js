@@ -1,62 +1,3 @@
-    (function () {
-      const canvas = document.getElementById('glcanvas');
-      const gl = canvas && canvas.getContext('webgl');
-      if (!gl) { if (canvas) canvas.style.display = 'none'; return; }
-      const vs = `attribute vec2 a_position; varying vec2 v_uv;
-        void main(){ gl_Position=vec4(a_position,0.0,1.0); v_uv=a_position*0.5+0.5; }`;
-      const fs = `precision highp float; uniform vec2 u_res; uniform vec2 u_mouse; uniform float u_dark; varying vec2 v_uv;
-        void main(){
-          vec2 uv=v_uv; float aspect=u_res.x/u_res.y; vec2 g=uv*vec2(aspect,1.0);
-          float density=30.0; vec2 f=fract(g*density);
-          vec2 m=u_mouse/u_res; m.x*=aspect; m.y=1.0-m.y;
-          float dist=distance(g*density, m*density);
-          float active=smoothstep(6.0,0.0,dist);
-          float thick=0.02+active*0.05;
-          vec2 grid=smoothstep(0.5-thick,0.5,abs(f-0.5));
-          float line=max(grid.x,grid.y);
-          vec3 bgL=vec3(0.980,0.976,0.957);
-          vec3 bgD=vec3(0.078,0.090,0.066);
-          vec3 bg=mix(bgL,bgD,u_dark);
-          vec3 lcL=mix(vec3(0.90,0.89,0.85), vec3(0.176,0.353,0.153), active*0.4);
-          vec3 lcD=mix(vec3(0.13,0.15,0.12), vec3(0.25,0.50,0.30), active*0.55);
-          vec3 lc=mix(lcL,lcD,u_dark);
-          vec3 color=mix(bg,lc,line*0.18);
-          float vignette=1.0-smoothstep(0.5,1.5,length(uv-0.5));
-          color*=mix(0.97,1.0,vignette);
-          gl_FragColor=vec4(color,1.0);
-        }`;
-      function sh(t,s){
-        const x=gl.createShader(t); gl.shaderSource(x,s); gl.compileShader(x);
-        if(!gl.getShaderParameter(x,gl.COMPILE_STATUS)){ console.warn(gl.getShaderInfoLog(x)); return null; }
-        return x;
-      }
-      const vsh=sh(gl.VERTEX_SHADER,vs), fsh=sh(gl.FRAGMENT_SHADER,fs);
-      if(!vsh||!fsh){ if(canvas) canvas.style.display='none'; return; }
-      const prog=gl.createProgram();
-      gl.attachShader(prog, vsh); gl.attachShader(prog, fsh);
-      gl.linkProgram(prog);
-      if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ console.warn(gl.getProgramInfoLog(prog)); if(canvas) canvas.style.display='none'; return; }
-      const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
-      const pL=gl.getAttribLocation(prog,"a_position"), rL=gl.getUniformLocation(prog,"u_res"), mL=gl.getUniformLocation(prog,"u_mouse"), dL=gl.getUniformLocation(prog,"u_dark");
-      let mx=0,my=0;
-      let darkMode = document.documentElement.getAttribute('data-theme') === 'dark';
-      document.addEventListener('mousemove', e=>{ mx=e.clientX; my=e.clientY; });
-      function resize(){ const w=canvas.clientWidth,h=canvas.clientHeight; if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;} }
-      let rafId = null;
-      function render(){ resize(); gl.viewport(0,0,canvas.width,canvas.height); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.useProgram(prog); gl.enableVertexAttribArray(pL); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-        gl.vertexAttribPointer(pL,2,gl.FLOAT,false,0,0); gl.uniform2f(rL,canvas.width,canvas.height); gl.uniform2f(mL,mx,my); gl.uniform1f(dL, darkMode?1.0:0.0);
-        gl.drawArrays(gl.TRIANGLES,0,6); rafId = requestAnimationFrame(render); }
-      // 暴露开关：设置面板可控制背景动效启停 + 主题切换
-      window.bgCanvas = {
-        start: function () { if (rafId === null) { canvas.style.display = ''; rafId = requestAnimationFrame(render); } },
-        stop: function () { if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; canvas.style.display = 'none'; } },
-        setDark: function (on) { darkMode = !!on; }
-      };
-      rafId = requestAnimationFrame(render);
-    })();
-
     const statusGrid = document.getElementById('statusGrid');
     const courseList = document.getElementById('courseList');
     const messages = document.getElementById('messages');
@@ -74,12 +15,26 @@
     const topbarSection = document.getElementById('topbarSection');
     const topbarMode = document.getElementById('topbarMode');
     const topSearch = document.getElementById('topSearch');
-    const clearContextButton = document.getElementById('clearContext');
-    let answerStyle = 'rigorous';
+    const welcomeMarkup = document.getElementById('welcomeMessage').outerHTML;
+    let answerStyle = 'concise';
+
+    function resizeComposer() {
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      const maxHeight = Math.max(32, Math.min(180, Math.floor(viewportHeight * .25)));
+      const scrollTop = queryInput.scrollTop;
+      queryInput.style.maxHeight = maxHeight + 'px';
+      queryInput.style.height = '0px';
+      const height = Math.max(32, Math.min(queryInput.scrollHeight, maxHeight));
+      queryInput.style.height = height + 'px';
+      queryInput.style.overflowY = queryInput.scrollHeight > height + 1 ? 'auto' : 'hidden';
+      queryInput.scrollTop = scrollTop;
+    }
 
     function syncComposerState() {
       if (!sendButton) return;
-      sendButton.disabled = isStreaming || !queryInput.value.trim();
+      resizeComposer();
+      sendButton.disabled = isStreaming || isRestoring || !queryInput.value.trim();
+      window.verimath?.artifacts?.setBusy(isStreaming || isRestoring);
     }
 
     // 右侧诊断面板：显式滚轮支持，让 wheel 事件在子元素上也能滚动面板本身
@@ -108,6 +63,28 @@
     let abortController = null;
     let currentTaskId = null;
     let isStreaming = false;
+    let chatSettled = Promise.resolve();
+    const drafts = new Map();
+    const savedScroll = new Map();
+    let hasRestored = false;
+    let restoreVersion = 0;
+    let restoringHistory = false;
+    let isRestoring = false;
+
+    function rememberSessionUI() {
+      if (!hasRestored) return;
+      drafts.set(sessionId, queryInput.value); savedScroll.set(sessionId, messages.scrollTop);
+      try { localStorage.setItem('verimath-session-ui-' + sessionId, JSON.stringify({ draft: queryInput.value, scroll: messages.scrollTop })); } catch (_) {}
+    }
+    function readSessionUI(id) {
+      if (drafts.has(id)) return;
+      try {
+        const saved = JSON.parse(localStorage.getItem('verimath-session-ui-' + id) || '{}');
+        if (typeof saved.draft === 'string') drafts.set(id, saved.draft);
+        if (Number.isFinite(saved.scroll)) savedScroll.set(id, saved.scroll);
+      } catch (_) {}
+    }
+    addEventListener('pagehide', rememberSessionUI);
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -129,6 +106,25 @@
     function getMarkdown() {
       if (!_md && window.markdownit) {
         _md = window.markdownit({ html: false, linkify: true, breaks: false });
+        const inlineCode = _md.renderer.rules.code_inline;
+        const fencedCode = _md.renderer.rules.fence;
+        _md.renderer.rules.code_inline = function (tokens, index, options, env, self) {
+          const text = restoreMathDelimiters(tokens[index].content);
+          if (/^(?:\\\([\s\S]*\\\)|\\\[[\s\S]*\\\]|\$[^$]+\$|\$\$[\s\S]*\$\$)$/.test(text)) return escapeHtml(text);
+          if (/^[\s0-9A-Za-zα-ωΑ-Ω⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻∇∫∑√∞≠≤≥≈·×÷−+*/^=().,|{}\[\]-]+$/u.test(text) &&
+              /[α-ωΑ-Ω⁰¹²³⁴⁵⁶⁷⁸⁹∇∫∑√∞≠≤≥≈·×÷]/u.test(text)) {
+            return '<span class="math-inline">' + escapeHtml(text) + '</span>';
+          }
+          return inlineCode(tokens, index, options, env, self);
+        };
+        _md.renderer.rules.fence = function (tokens, index, options, env, self) {
+          if (/^(math|latex|tex)(\s|$)/i.test(tokens[index].info.trim())) {
+            const formula = restoreMathDelimiters(tokens[index].content).trim()
+              .replace(/^\$\$([\s\S]*)\$\$$/, '$1').replace(/^\\\[([\s\S]*)\\\]$/, '$1');
+            return '<div class="math-block">\\[' + escapeHtml(formula) + '\\]</div>\n';
+          }
+          return fencedCode(tokens, index, options, env, self);
+        };
       }
       return _md;
     }
@@ -216,7 +212,7 @@
       row.appendChild(col);
       messages.appendChild(row);
       if (window.renderIcons) renderIcons(row);
-      messages.scrollTop = messages.scrollHeight;
+      if (!restoringHistory) messages.scrollTop = messages.scrollHeight;
       return item;
     }
 
@@ -263,7 +259,7 @@
          expand.type = 'button'; expand.className = 'artifact-action'; expand.title = '全屏查看'; expand.setAttribute('aria-label', '全屏查看');
         expand.innerHTML = '<span data-icon="fullscreen" data-icon-size="16"></span>';
         expand.addEventListener('click', () => {
-          if (window.__openCanvasModal) window.__openCanvasModal(spec.html, spec.title);
+          openArtifactModal(card, spec.title);
         });
         actions.appendChild(dl);
         actions.appendChild(expand);
@@ -272,25 +268,36 @@
 
         const canvasHost = document.createElement('div');
         canvasHost.className = 'artifact-canvas';
+        // 先插入文档再建 iframe：postMessage 的 event.source 只有在 iframe 已入文档后
+        // 才能与它自己的 contentWindow 对上，否则 bridge 报上来的高度查不到归属。
+        inner.appendChild(canvasHost);
         const iframe = document.createElement('iframe');
         iframe.setAttribute('sandbox', 'allow-scripts');
         iframe.setAttribute('srcdoc', spec.html || '');
         iframe.className = 'html-canvas-iframe';
         iframe.style.width = '100%';
-        iframe.style.height = (spec.height || 420) + 'px';
         iframe.style.border = '0';
-        iframe.style.background = '#fff';
+        iframe.style.background = 'transparent';
         iframe.setAttribute('title', spec.title || '可视化组件');
         canvasHost.appendChild(iframe);
-        inner.appendChild(canvasHost);
         card.appendChild(inner);
         host.appendChild(card);
+        // 注册必须在 iframe 真正进入文档之后：离屏 iframe 的 contentWindow 是 null，
+        // 提前注册会让它进不了 canvasFrames，之后所有高度汇报都被静默丢弃
+        // （表现就是"永远是 420px"）。见 autoFitIframe 的说明。
+        autoFitIframe(iframe, spec.height || 320);
         if (window.renderIcons) renderIcons(card);
         return card;
       }
 
       if (!window.widgets || !window.widgets.has(spec.kind)) return null;
       const widget = window.widgets.get(spec.kind);
+
+      // canvasHost 必须先声明：下载/全屏按钮的闭包引用了它。
+      // 放在按钮之后声明会触发 TDZ ReferenceError，整张图被 mountArtifact
+      // 外层 try/catch 静默吞掉 —— 界面看起来"没报错但也没图"。
+      const canvasHost = document.createElement('div');
+      canvasHost.className = 'artifact-canvas';
 
       const card = document.createElement('section');
       card.className = 'artifact artifact-demo';
@@ -325,18 +332,12 @@
        const expand = document.createElement('button');
        expand.type = 'button'; expand.className = 'artifact-action'; expand.title = '全屏查看'; expand.setAttribute('aria-label', '全屏查看');
        expand.innerHTML = '<span data-icon="fullscreen" data-icon-size="16"></span>';
-       expand.addEventListener('click', () => {
-         if (window.__openWidgetModal) {
-           window.__openWidgetModal(spec.title, (modalHost) => widget.render(modalHost, spec, state));
-         }
-       });
+       expand.addEventListener('click', () => openArtifactModal(card, spec.title));
        actions.appendChild(download);
        actions.appendChild(expand);
       head.appendChild(actions);
       inner.appendChild(head);
 
-      const canvasHost = document.createElement('div');
-      canvasHost.className = 'artifact-canvas';
       inner.appendChild(canvasHost);
       card.appendChild(inner);
       host.appendChild(card);
@@ -348,10 +349,22 @@
 
       const state = {};
       controls.forEach((c) => { state[c.key] = c.value; });
+      const stateKey = 'verimath-artifact-state-' + (host.dataset.jobId || '');
+      if (host.dataset.jobId) {
+        try {
+          const saved = JSON.parse(localStorage.getItem(stateKey) || '{}');
+          controls.forEach(c => { if (Number.isFinite(saved[c.key])) state[c.key] = Math.max(c.min, Math.min(c.max, saved[c.key])); });
+        } catch (_) {}
+      }
 
       let failed = false;
       function draw() {
+        if (host.dataset.jobId) { try { localStorage.setItem(stateKey, JSON.stringify(state)); } catch (_) {} }
         if (failed) return;
+        // Widget renderers replace their children. Keep their occupied height while they measure
+        // the new canvas so a layout read cannot clamp the chat scroll position to a shorter page.
+        const previousMinHeight = canvasHost.style.minHeight;
+        canvasHost.style.minHeight = canvasHost.getBoundingClientRect().height + 'px';
         try {
           widget.render(canvasHost, spec, Object.keys(state).length ? state : undefined);
         } catch (error) {
@@ -363,10 +376,28 @@
             '）。上面的文字答案不受影响。';
           canvasHost.appendChild(msg);
           reportRenderFail('artifact ' + spec.kind + ': ' + (error && error.message));
+        } finally {
+          canvasHost.style.minHeight = previousMinHeight;
         }
       }
+      card._redraw = draw;
       draw();
       if (failed) return card;
+
+      // 容器宽度随窗口 / 侧栏 / 全屏变化时重排：图应当随版面长大，而不是被裁掉
+      if (window.ResizeObserver) {
+        let lastW = 0;
+        const ro = new ResizeObserver(() => {
+          const w = canvasHost.clientWidth;
+          // 合并同一帧的布局变化，同时让拖动侧栏与画布同步。
+          if (!w || Math.abs(w - lastW) < 2) return;
+          lastW = w;
+          cancelAnimationFrame(card._resizeFrame);
+          card._resizeFrame = requestAnimationFrame(draw);
+        });
+        ro.observe(canvasHost);
+        card._resizeObserver = ro;
+      }
 
       if (controls.length) {
         const box = document.createElement('div');
@@ -380,7 +411,7 @@
           const name = document.createElement('span');
           name.textContent = c.label;
           const val = document.createElement('b');
-          val.textContent = formatControlValue(c.value, c.step);
+          val.textContent = formatControlValue(state[c.key], c.step);
           row.appendChild(name);
           row.appendChild(val);
           const input = document.createElement('input');
@@ -388,7 +419,7 @@
           input.min = String(c.min);
           input.max = String(c.max);
           input.step = String(c.step);
-          input.value = String(c.value);
+          input.value = String(state[c.key]);
           input.setAttribute('aria-label', c.label);
           input.addEventListener('wheel', function (wheelEvt) {
             if (!input.matches(':focus') && !input.matches(':hover')) return;
@@ -437,71 +468,33 @@
       if (!Array.isArray(list) || !list.length || !host) return;
       if (host.dataset.artifactsDone === '1') return;
       host.dataset.artifactsDone = '1';
+      // 占位卡片立刻出现：等模型答案完整到达再挂图，中间会有上百毫秒的空档，
+      // 学生会以为"没有图"。先亮标题，再补内容，视觉上是一张卡在变完整。
+      const skeleton = document.createElement('div');
+      skeleton.className = 'artifact artifact-pending';
+      skeleton.innerHTML =
+        '<div class="artifact-inner">' +
+          '<div class="artifact-head"><div class="artifact-head-left">' +
+            '<span class="artifact-type">Visualization · 准备中</span>' +
+            '<div class="artifact-caption">' + escapeHtml(list[0].title || '可视化') + '</div>' +
+          '</div><span class="artifact-spinner" aria-hidden="true"></span></div>' +
+          '<div class="artifact-skel-chart" aria-hidden="true"></div>' +
+        '</div>';
+      host.appendChild(skeleton);
+      let mounted = 0;
       list.forEach((spec) => {
         try {
-          mountArtifact(spec, host);
+          const card = mountArtifact(spec, host);
+          if (card && card !== skeleton) { mounted += 1; card.classList.add('artifact-in'); }
         } catch (_) { }
       });
+      skeleton.remove();
       messages.scrollTop = messages.scrollHeight;
+      return mounted;
     }
 
     function renderArtifactButton(host, offer) {
-      if (!offer || !host) return null;
-      if (host.dataset.offerDone === '1') return null;
-      host.dataset.offerDone = '1';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'artifact-offer-btn';
-      const title = offer.title || '可视化组件';
-      btn.innerHTML = (window.icon ? window.icon('show_chart', 18) : '') +
-        '<span class="artifact-offer-text"><b>生成可视化</b><em>' + escapeHtml(title) + '</em></span>' +
-        '<span class="artifact-offer-hint">点击制作</span>';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        btn.classList.add('loading');
-        const hint = btn.querySelector('.artifact-offer-hint');
-        if (hint) hint.textContent = '制作中…';
-        const skel = document.createElement('div');
-        skel.className = 'canvas-skeleton';
-        skel.innerHTML =
-          '<div class="canvas-skel-spinner"></div>' +
-          '<div class="canvas-skel-text">正在制作可视化组件…</div>' +
-          '<div class="canvas-skel-hint">模型正在生成可交互组件，请稍候片刻</div>' +
-          '<div class="canvas-skel-bars"><span></span><span></span><span></span><span></span><span></span><span></span></div>';
-        host.appendChild(skel);
-        messages.scrollTop = messages.scrollHeight;
-        try {
-          await new Promise(r => setTimeout(r, 600));
-          if (offer.spec) {
-            mountArtifact(offer.spec, host);
-          } else {
-            const resp = await fetch('/api/panel/artifact', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({query: offer.query || '', route: offer.route || 'concept'}),
-            });
-            const data = await resp.json();
-            if (!resp.ok) throw new Error(data.detail || `status ${resp.status}`);
-            if (data.ok && data.artifact) {
-              mountArtifact(data.artifact, host);
-            } else {
-              throw new Error(data.detail || '未生成组件');
-            }
-          }
-          await new Promise(r => setTimeout(r, 300));
-          skel.remove();
-          btn.remove();
-          messages.scrollTop = messages.scrollHeight;
-        } catch (err) {
-          skel.remove();
-          btn.classList.remove('loading');
-          btn.disabled = false;
-          if (hint) hint.textContent = '失败：' + err.message;
-        }
-      });
-      host.appendChild(btn);
-      messages.scrollTop = messages.scrollHeight;
-      return btn;
+      return window.verimath.artifacts.offer(host, offer);
     }
 
     function nearBottomSafe() {
@@ -510,37 +503,6 @@
 
     function renderPending(stage) {
       return `<strong>${escapeHtml(stage)}</strong><span class="typing-dots"><span></span><span></span><span></span></span>`;
-    }
-
-    // ============================================================
-    // 思考链（reasoning）：DeepSeek 真实 reasoning_content，暖黄可折叠面板。
-    // ============================================================
-    var TOOL_LABELS = {
-      plot_distribution: '生成分布图',
-      search_knowledge_base: '查阅本地知识库',
-      generate_exercise: '生成练习题',
-      recommend_method: '选择统计方法',
-      build_canvas: '构建可视化组件',
-    };
-
-    function createReasoningBlock(host) {
-      var block = document.createElement('div');
-      block.className = 'reasoning-block streaming open';
-      block.innerHTML =
-        '<div class="reasoning-head">' +
-          '<span class="reasoning-arrow">' + (window.icon ? window.icon('chevron_right', 16) : '▶') + '</span>' +
-          '<span class="reasoning-label">Thought Process</span>' +
-          '<span class="reasoning-status">thinking…</span>' +
-        '</div>' +
-        '<div class="reasoning-body"><ul class="reasoning-list"></ul></div>';
-      host.appendChild(block);
-      if (window.renderIcons) renderIcons(block);
-      block.querySelector('.reasoning-head').addEventListener('click', function (e) {
-        e.stopPropagation();
-        block.classList.toggle('open');
-      });
-      block._rawReasoning = '';
-      return block;
     }
 
     function formatReasoningItems(text) {
@@ -552,33 +514,240 @@
       });
     }
 
-    function appendReasoning(block, text) {
-      if (!block || !text) return;
-      block._rawReasoning += text;
-      var body = block.querySelector('.reasoning-body');
-      var list = body.querySelector('.reasoning-list');
-      var items = formatReasoningItems(block._rawReasoning);
-      list.innerHTML = items.map(function (item) {
-        return '<li><span class="bullet">→</span><span>' + escapeHtml(item) + '</span></li>';
-      }).join('');
-      var cnt = block._rawReasoning.length;
-      var status = block.querySelector('.reasoning-status');
-      if (status && block.classList.contains('streaming')) {
-        status.textContent = 'thinking · ' + cnt + ' chars';
+    var TOOL_LABELS = {
+      calculate_calculus: '核对微积分计算',
+      plot_distribution: '生成分布图',
+      search_knowledge_base: '查阅本地知识库',
+      generate_exercise: '生成练习题',
+      recommend_method: '选择统计方法',
+      build_canvas: '构建可视化组件',
+    };
+
+    // ============================================================
+    // 对话区骨架：标题行 + 正文 + 伴随物（工具/可视化/反馈）
+    //
+    // 之前的三处割裂都在这里收口：
+    //   1) 每次提问结束时，活动行、正文、可视化卡、反馈条各自被追加到不同祖先上，
+    //      宽窄不一、上下错位，读起来像三块拼起来的布。
+    //   2) 可视化卡排在整条回答的最下面，学生读到"可视化已生成"时图还在屏幕外。
+    //   3) 图定高 420px，内容比框矮时下半截全是白。
+    // 现在：一条回答 = 一个 body；图在正文之后、追问之前；图高按 iframe 内容自适应。
+    // ============================================================
+    function ensureAnswerBody(col) {
+      let body = col.querySelector('.msg-body');
+      if (!body) {
+        body = document.createElement('div');
+        body.className = 'msg-body';
+        col.appendChild(body);
       }
+      return body;
     }
 
-    function finalizeReasoning(block, reason) {
-      if (!block) return;
-      block.classList.remove('streaming');
-      var cnt = block._rawReasoning ? block._rawReasoning.length : 0;
-      var status = block.querySelector('.reasoning-status');
-      if (status) {
-        status.textContent = reason === 'stopped'
-          ? 'stopped · ' + cnt + ' chars'
-          : 'done · ' + cnt + ' chars';
+    function ensureCompanion(col) {
+      let wrap = col.querySelector('.msg-companion');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'msg-companion';
+        col.appendChild(wrap);
       }
-      block.classList.remove('open');
+      const existing = wrap.querySelector('.artifact-host');
+      if (existing) return existing;
+      const host = document.createElement('div');
+      host.className = 'artifact-host';
+      wrap.appendChild(host);
+      return host;
+    }
+
+    // iframe 内容高度自适应：组件自己绘多少，卡片就多高。
+    // 固定 420px 会让「割分演示」下面留一大片空白，也会把长图切掉。
+    //
+    // 沙箱 iframe 没有 allow-same-origin，宿主读不到它的 DOM，所以高度只能由
+    // 注入的 /static/bridge.js 通过 postMessage 回传（见 watchBridgeMessages）。
+    const canvasFrames = new Map();   // iframe.contentWindow -> iframe
+    const frameErrors = new WeakSet();
+
+    function failCanvas(iframe, message) {
+      if (!iframe.isConnected || frameErrors.has(iframe)) return;
+      frameErrors.add(iframe);
+      clearTimeout(iframe._readyTimer);
+      const note = document.createElement('div');
+      note.className = 'artifact-frame-error';
+      note.textContent = '图形运行出现问题，请重新生成可视化。';
+      iframe.parentNode?.appendChild(note);
+      iframe.dispatchEvent(new CustomEvent('verimath:artifact-error', {
+        bubbles: true, detail: { jobId: iframe.closest('[data-job-id]')?.dataset.jobId },
+      }));
+      reportRenderFail(message);
+    }
+
+    function autoFitIframe(iframe, fallback) {
+      const min = 160;
+      const max = 760;
+      const initial = Math.max(min, Math.min(max, fallback || 320));
+      iframe.style.height = initial + 'px';
+      // 注册进 canvasFrames，postMessage 才能按 event.source 找到归属。
+      // contentWindow 在离屏阶段是 null，所以这里既当场注册、又在 load 时补一次。
+      function register() {
+        try {
+          if (iframe.contentWindow) canvasFrames.set(iframe.contentWindow, iframe);
+        } catch (_) { }
+      }
+      register();
+      iframe._readyTimer = setTimeout(() => failCanvas(iframe, 'canvas readiness timeout'), 12000);
+      let probeTimer;
+      function onLoad() {
+        register();
+        iframe.contentWindow?.postMessage({ source: 'verimath-host', type: 'theme', dark: document.documentElement.dataset.theme === 'dark' }, '*');
+        const key = iframe.closest('[data-job-id]')?.dataset.jobId;
+        if (key) {
+          try {
+            const state = JSON.parse(localStorage.getItem('verimath-frame-state-' + key) || 'null');
+            if (state) iframe.contentWindow?.postMessage({ source: 'verimath-host', type: 'restore-controls', state }, '*');
+          } catch (_) {}
+        }
+        // 组件自己在 load 前后都会汇报；这里再请它算一次，兜住"汇报早于注册"的竞态
+        probeTimer = setTimeout(function () {
+          try {
+            if (iframe.contentWindow) iframe.contentWindow.postMessage({ source: 'verimath-probe' }, '*');
+          } catch (_) { }
+        }, 260);
+      }
+      iframe.addEventListener('load', onLoad);
+      iframe._dispose = () => {
+        clearTimeout(iframe._readyTimer); clearTimeout(probeTimer);
+        iframe.removeEventListener('load', onLoad);
+        for (const [key, frame] of canvasFrames) if (frame === iframe) canvasFrames.delete(key);
+      };
+    }
+
+    function watchBridgeMessages() {
+      window.addEventListener('message', function (event) {
+        const data = event.data;
+        if (!data || data.source !== 'verimath-canvas') return;
+        const iframe = canvasFrames.get(event.source);
+        if (!iframe || !iframe.isConnected) return;
+        if (data.type === 'ready') {
+          clearTimeout(iframe._readyTimer);
+        } else if (data.type === 'controls') {
+          const key = iframe.closest('[data-job-id]')?.dataset.jobId;
+          if (key && Array.isArray(data.state) && JSON.stringify(data.state).length < 32000) {
+            try { localStorage.setItem('verimath-frame-state-' + key, JSON.stringify(data.state)); } catch (_) {}
+          }
+        } else if (data.type === 'resize') {
+          const raw = Number(data.height);
+          if (!Number.isFinite(raw) || raw <= 0) return;
+          clearTimeout(iframe._readyTimer);
+          const h = Math.max(48, Math.min(Math.round(innerHeight * 0.7), Math.ceil(raw)));
+          const current = parseFloat(iframe.style.height) || 0;
+          if (Math.abs(current - h) < 3) return;
+          // 高度变化用一个短过渡，避免"刷"地跳一下
+          iframe.classList.add('iframe-resizing');
+          iframe.style.height = h + 'px';
+          setTimeout(function () { iframe.classList.remove('iframe-resizing'); }, 180);
+        } else if (data.type === 'error') {
+          // A deferred observer notification does not mean the component crashed.
+          if (/^ResizeObserver loop (?:completed with undelivered notifications\.?|limit exceeded\.?)$/.test(data.message || '')) return;
+          failCanvas(iframe, 'canvas iframe ' + data.kind + ': ' + data.message);
+        }
+      });
+    }
+    watchBridgeMessages();
+
+    // ============================================================
+    // 思考链（reasoning）：DeepSeek 真实 reasoning_content。
+    // 形态学 Claude / Pi：只有一行"活动行"，随阶段原地变形
+    //   思考中  →  Braille 转轮 + 最新一句想法 + 计时 + ▸（点开看全文）
+    //   调用工具 →  转轮 + 工具名
+    //   写回答  →  活动行自行收起，只留一个可展开的小尾巴
+    // 而不是每条消息前面先撒一堆框（加载骨架 + 思考面板 + 工具条）。
+    // ============================================================
+    var SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+    function createActivityRow(host) {
+      var row = document.createElement('div');
+      row.className = 'activity-row idle';
+      row.innerHTML =
+        '<button class="activity-main" type="button" aria-expanded="false">' +
+          '<span class="activity-spinner" aria-hidden="true">' + SPINNER_FRAMES[0] + '</span>' +
+          '<span class="activity-verb">思考中</span>' +
+          '<span class="activity-preview"></span>' +
+          '<span class="activity-timer">0s</span>' +
+          '<span class="activity-chevron" aria-hidden="true">›</span>' +
+        '</button>' +
+        '<div class="activity-body" hidden></div>';
+      host.appendChild(row);
+
+      var started = Date.now();
+      var frame = 0;
+      var spinner = row.querySelector('.activity-spinner');
+      var verb = row.querySelector('.activity-verb');
+      var preview = row.querySelector('.activity-preview');
+      var timer = row.querySelector('.activity-timer');
+      var chevron = row.querySelector('.activity-chevron');
+      var body = row.querySelector('.activity-body');
+      var main = row.querySelector('.activity-main');
+      var raw = '';
+      var bodyShown = false;
+
+      var tick = setInterval(function () {
+        frame = (frame + 1) % SPINNER_FRAMES.length;
+        spinner.textContent = SPINNER_FRAMES[frame];
+        var sec = Math.round((Date.now() - started) / 1000);
+        timer.textContent = sec >= 60 ? Math.floor(sec / 60) + 'm' + (sec % 60) + 's' : sec + 's';
+      }, 90);
+
+      // 点开时显示全文；未开放区域永远不参与流式高度抖动
+      main.addEventListener('click', function () {
+        if (!row.classList.contains('has-body')) return;
+        bodyShown = !bodyShown;
+        body.hidden = !bodyShown;
+        row.classList.toggle('open', bodyShown);
+        main.setAttribute('aria-expanded', bodyShown ? 'true' : 'false');
+        chevron.style.transform = bodyShown ? 'rotate(90deg)' : '';
+        if (bodyShown) refreshBody();
+      });
+
+      function refreshBody() {
+        // 展开时即便还没收到新 token 也要把已有内容铺上（否则点了箭头是空白）
+        if (!bodyShown) return;
+        body.innerHTML = '<ul class="reasoning-list">' + formatReasoningItems(raw).map(function (item) {
+          return '<li><span class="bullet">›</span><span>' + escapeHtml(item) + '</span></li>';
+        }).join('') + '</ul>';
+        body.scrollTop = body.scrollHeight;
+      }
+      return {
+        row: row,
+        setPhase: function (label, spinning) {
+          verb.textContent = label;
+          row.classList.toggle('idle', !spinning);
+          row.classList.toggle('running', !!spinning);
+        },
+        appendReasoning: function (text) {
+          if (!text) return;
+          raw += text;
+          // 预览取最后一行有内容的想法：学生想知道"它在想什么"，而不是看了多少次
+          var lines = raw.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+          var last = lines.length ? lines[lines.length - 1] : '';
+          preview.textContent = last.slice(-90);
+          if (raw.length > 0) {
+            row.classList.add('has-body');
+            chevron.style.visibility = 'visible';
+            refreshBody();
+          }
+        },
+        finalize: function (reason) {
+          clearInterval(tick);
+          row.classList.remove('running');
+          row.classList.add(reason === 'stopped' ? 'stopped' : 'done');
+          spinner.textContent = reason === 'stopped' ? '■' : '✓';
+          verb.textContent = reason === 'stopped' ? '已停止' : '思考完成';
+          if (reason !== 'stopped') preview.textContent = '';
+          if (!bodyShown) body.hidden = true;
+          if (raw && row.classList.contains('has-body')) { raw = raw; } else { row.classList.remove('has-body'); }
+          if (!raw) row.classList.add('empty');
+          if (window.renderIcons) renderIcons(row);
+        }
+      };
     }
 
     function renderStatus(data) {
@@ -675,34 +844,16 @@
         return;
       }
       historyList.innerHTML = items.map(item => `
-        <div class="record-item" data-record-id="${escapeHtml(item.id)}">
-          <div class="record-title">${escapeHtml(item.query)}</div>
+        <div class="record-item" data-record-id="${escapeHtml(item.session_id)}">
+          <div class="record-title">${escapeHtml(item.title || '新对话')}</div>
           <div class="record-meta">
-            <span>${escapeHtml(item.route)}</span>
-            <span>${escapeHtml(formatTime(item.created_at))}</span>
-            <span>${item.flags && item.flags.model_used ? 'DeepSeek' : '离线'}</span>
+            <span>${escapeHtml(formatTime(item.updated_at))}</span>
           </div>
         </div>
       `).join('');
       historyList.querySelectorAll('.record-item').forEach((node, index) => {
         node.addEventListener('click', () => {
-          const item = items[index];
-          if (item.session_id && item.session_id !== sessionId) {
-            sessionId = item.session_id;
-            try { window.localStorage.setItem('agent-session-id', sessionId); } catch (_) {}
-          }
-          messages.innerHTML = '';
-          addMessage('user', item.query || '');
-          if (item.answer) addMessage('assistant', item.answer);
-          renderSources({sources: item.sources || []});
-          renderDiagnostics({
-            route: item.route,
-            status: 'saved',
-            flags: item.flags || {},
-            requires_clarification: false,
-            sources: item.sources || [],
-          });
-          loadContext().catch(() => {});
+          restoreSession(items[index].session_id);
         });
       });
       // 若搜索框有值，重新应用过滤
@@ -741,9 +892,113 @@
     }
 
     async function loadHistory() {
-      const response = await fetch('/api/panel/history?limit=12');
+      const response = await fetch('/api/panel/sessions?limit=100');
       if (!response.ok) throw new Error(`history ${response.status}`);
       renderHistory((await response.json()).items || []);
+      historyList.querySelectorAll('.record-item').forEach((node, index) => {
+        node.classList.toggle('active', window._historyItems[index].session_id === sessionId);
+      });
+    }
+
+    function disposeArtifacts(host) {
+      host.querySelectorAll('.artifact').forEach(card => {
+        card._resizeObserver?.disconnect(); cancelAnimationFrame(card._resizeFrame);
+      });
+      host.querySelectorAll('.html-canvas-iframe').forEach(frame => frame._dispose?.());
+    }
+
+    function disposeMessages() {
+      closeExpandedArtifact();
+      disposeArtifacts(messages);
+    }
+
+    function restoreMessage(item) {
+      const text = item.status === 'streaming' ? (item.content || '回答正在生成…') : item.content;
+      const bubble = addMessage(item.role, text);
+      const row = bubble.closest('.msg-row'); row.dataset.messageId = item.message_id;
+      row.dataset.sessionId = item.session_id;
+      if (item.role === 'assistant') {
+        if (['cancelled', 'interrupted'].includes(item.status)) {
+          const note = document.createElement('small'); note.className = 'message-status';
+          note.textContent = item.status === 'cancelled' ? '已停止生成' : '回答已中断'; bubble.appendChild(note);
+        }
+        appendSourcesToMessage(bubble, item);
+        window.verimath.artifacts.restore(ensureCompanion(bubble.parentNode), item.visualization_offers, item.artifact_jobs);
+        window.verimath.artifacts.followups(row, item);
+        window.verimath.artifacts.watchDiscovery(item.visualization_state === 'checking' || item.followups_state === 'checking');
+      }
+      return row;
+    }
+
+    async function restoreSession(nextId, { fresh = false } = {}) {
+      const version = ++restoreVersion;
+      isRestoring = true; syncComposerState();
+      if (isStreaming) { abortController?.abort(); await chatSettled; }
+      if (version !== restoreVersion) return;
+      rememberSessionUI(); hasRestored = true;
+      sessionId = nextId;
+      document.dispatchEvent(new CustomEvent('verimath:session-change', { detail: { sessionId } }));
+      readSessionUI(nextId);
+      try { localStorage.setItem('agent-session-id', nextId); } catch (_) {}
+      queryInput.value = drafts.get(nextId) || '';
+      resizeComposer();
+      window.verimath.artifacts.reset(); window.verimath.resetCoach?.(); disposeMessages();
+      messages.innerHTML = '';
+      document.getElementById('quickChips')?.classList.toggle('chips-hidden', !fresh);
+      window.verimath.layout?.closeSide();
+      restoringHistory = true;
+      try {
+        const response = fresh ? null : await fetch('/api/panel/sessions/' + encodeURIComponent(nextId) + '/messages?limit=100');
+        if (response && !response.ok) throw new Error('无法读取会话');
+        const data = response ? await response.json() : { items: [] };
+        if (version !== restoreVersion) return;
+        if (!data.items.length) {
+          messages.innerHTML = welcomeMarkup;
+          document.getElementById('quickChips')?.classList.remove('chips-hidden');
+        } else {
+          data.items.forEach(restoreMessage);
+          const last = [...data.items].reverse().find(item => item.role === 'assistant');
+          if (last) {
+            renderSources(last); renderDiagnostics(last);
+            if (last.coach) window.verimath.onCoachEvent?.(last.coach);
+            window.verimath._coachNote = null;
+          }
+          if (data.has_more) {
+            const older = document.createElement('button'); older.type = 'button'; older.className = 'load-older'; older.textContent = '加载更早消息';
+            let cursor = data.before;
+            older.addEventListener('click', async () => {
+              older.disabled = true;
+              const anchor = older.nextElementSibling;
+              const top = anchor?.getBoundingClientRect().top;
+              try {
+                const res = await fetch('/api/panel/sessions/' + encodeURIComponent(nextId) + '/messages?before=' + cursor);
+                if (!res.ok) throw new Error('读取失败');
+                const page = await res.json(); if (version !== restoreVersion) return;
+                restoringHistory = true;
+                const fragment = document.createDocumentFragment();
+                page.items.forEach(item => fragment.appendChild(restoreMessage(item)));
+                older.after(fragment); cursor = page.before;
+                if (!page.has_more) older.remove();
+                if (anchor?.isConnected) messages.scrollTop += anchor.getBoundingClientRect().top - top;
+              } catch (_) { older.textContent = '加载失败，点击重试'; }
+              finally { restoringHistory = false; older.disabled = false; }
+            });
+            messages.prepend(older);
+          }
+        }
+        if (window.renderIcons) renderIcons(messages);
+        messages.scrollTop = savedScroll.get(nextId) ?? messages.scrollHeight;
+        if (topbarSection) topbarSection.textContent = (data.items.find(item => item.role === 'user')?.content || '新对话').slice(0, 35);
+        loadContext().catch(() => {});
+        loadHistory().catch(() => {});
+      } catch (_) {
+        if (version !== restoreVersion) return;
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'load-older';
+        retry.textContent = '会话读取失败，点击重试'; retry.onclick = () => restoreSession(nextId); messages.appendChild(retry);
+      } finally {
+        if (version === restoreVersion) { restoringHistory = false; isRestoring = false; }
+        syncComposerState();
+      }
     }
 
     async function loadTestRuns() {
@@ -799,26 +1054,43 @@
     }
 
     async function ask(query) {
-      if (isStreaming || !String(query || '').trim()) return;
+      if (isStreaming || isRestoring || !String(query || '').trim()) return;
       const welcome = document.getElementById('welcomeMessage');
       if (welcome) welcome.remove();
+      // 快捷提问 chips 只服务"空对话"；对话开始后它们既没人点，又把输入条顶高、
+      // 让注意力从"你刚问的问题"上飘走。这里只在有历史消息时收起。
+      const chips = document.getElementById('quickChips');
+      if (chips) chips.classList.add('chips-hidden');
       addMessage('user', query);
       isStreaming = true;
+      let settle;
+      chatSettled = new Promise(resolve => { settle = resolve; });
+      const requestSession = sessionId;
       abortController = new AbortController();
       currentTaskId = null;
       syncComposerState();
       sendButton.hidden = true;       /* 发送/停止互斥：流式时只显示停止 */
       stopButton.hidden = false;
       const pending = addMessage('assistant', '', 'pending');
-      pending.innerHTML = renderPending('Thinking');
-      const reasoningHost = document.createElement('div');
-      reasoningHost.className = 'think-host';
-      pending.parentNode.insertBefore(reasoningHost, pending);
-      let currentReasoning = null;
+      pending.innerHTML = renderPending('正在思考');
+      // 提问后输入条回到单行，否则光标停在上一轮的多行高度上，像"没清干净"
+      resizeComposer();
+      // 一条回答的全部内容都留在这一列里：活动行 → 正文 → 伴随物（工具/可视化）。
+      // 之前 artifactHost 挂在 messages 上，会和正文分家、宽度也不一致。
+      const column = pending.parentNode;
+      const thinkHost = document.createElement('div');
+      thinkHost.className = 'think-host';
+      column.insertBefore(thinkHost, pending);
+      const activity = createActivityRow(thinkHost);
+      if (!settings.get('showThinking')) activity.row.classList.add('muted');
+      let activityDone = false;
+      function closeActivity(reason) {
+        if (activityDone) return;
+        activityDone = true;
+        activity.finalize(reason);
+      }
       let toolCount = 0;
-      const artifactHost = document.createElement('div');
-      artifactHost.className = 'artifact-host';
-      messages.appendChild(artifactHost);
+      const artifactHost = ensureCompanion(column);
       let acc = '';
       let finalData = null;
       let streaming = false;
@@ -827,7 +1099,7 @@
         const response = await fetch('/api/panel/chat/stream', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({query, use_model: modelToggle.checked, answer_style: answerStyle, session_id: sessionId}),
+          body: JSON.stringify({query, use_model: modelToggle.checked, answer_style: answerStyle, session_id: requestSession}),
           signal: abortController.signal,
         });
         if (!response.ok || !response.body) {
@@ -850,44 +1122,45 @@
             if (evt.event === 'meta') {
               finalData = evt.data;
               currentTaskId = evt.data.taskId || null;
+              pending.closest('.msg-row').dataset.messageId = evt.data.message_id;
+              pending.closest('.msg-row').dataset.sessionId = requestSession;
               renderSources(evt.data);
-              renderArtifacts(evt.data.artifacts, artifactHost);
               pending.innerHTML = renderPending(modelToggle.checked ? '正在生成回答' : '整理答案');
             } else if (evt.event === 'thinking') {
-              if (!currentReasoning && settings.get('showThinking')) {
-                currentReasoning = createReasoningBlock(reasoningHost);
-                pending.style.display = 'none';
-              }
-              if (currentReasoning) appendReasoning(currentReasoning, evt.data.text || '');
-              const nearBottom = messages.scrollTop + messages.clientHeight >= messages.scrollHeight - 80;
-              if (nearBottom) messages.scrollTop = messages.scrollHeight;
+              activity.appendReasoning(evt.data.text || '');
+              if (nearBottomSafe()) messages.scrollTop = messages.scrollHeight;
             } else if (evt.event === 'delta') {
-              if (currentReasoning) { finalizeReasoning(currentReasoning); currentReasoning = null; }
+              activity.setPhase('撰写回答', true);
               if (!streaming) { streaming = true; pending.classList.remove('pending'); pending.style.display = ''; }
-              const nearBottom = messages.scrollTop + messages.clientHeight >= messages.scrollHeight - 80;
               acc += (evt.data.text || '');
               pending.textContent = acc;
-              if (nearBottom) messages.scrollTop = messages.scrollHeight;
+              if (nearBottomSafe()) messages.scrollTop = messages.scrollHeight;
             } else if (evt.event === 'tool_call') {
-              if (currentReasoning) { finalizeReasoning(currentReasoning); currentReasoning = null; }
+              activity.setPhase(TOOL_LABELS[evt.data.name] || ('调用 ' + (evt.data.name || '工具')), true);
               renderToolStep(artifactHost, evt.data, 'call');
             } else if (evt.event === 'tool_result') {
               toolCount += 1;
+              activity.setPhase('整理工具结果', true);
               renderToolStep(artifactHost, evt.data, 'result');
+            } else if (evt.event === 'sources') {
+              finalData = { ...finalData, sources: evt.data.sources || [] };
+              renderSources(finalData);
             } else if (evt.event === 'artifact_offer') {
-              const offerBtn = renderArtifactButton(artifactHost, evt.data);
-              // 自动生成组件：开启时自动点击按钮触发制作
-              if (offerBtn && settings.get('autoArtifact')) {
-                setTimeout(() => { if (!offerBtn.disabled) offerBtn.click(); }, 400);
-              }
+              // Offers are rendered after final; Canvas jobs have their own lifecycle.
             } else if (evt.event === 'artifact') {
               renderArtifacts([evt.data.artifact], artifactHost);
+            } else if (evt.event === 'coach') {
+              // 教学脚手架事件：帮助阶梯 + 误概念。侧栏卡片 + 回答下方旁注。
+              if (window.verimath && window.verimath.onCoachEvent) {
+                window.verimath.onCoachEvent(evt.data);
+              }
             } else if (evt.event === 'final') {
               finalData = evt.data;
             }
           }
         }
         const data = finalData || {content: acc};
+        closeActivity('done');
         pending.classList.remove('pending');
         pending.innerHTML = renderMarkdown(data.content || acc || '');
         typesetMath(pending);
@@ -895,22 +1168,33 @@
         renderSources(data);
         appendSourcesToMessage(pending, data);
         renderArtifacts(data.artifacts, artifactHost);
-        if (currentReasoning) { finalizeReasoning(currentReasoning); currentReasoning = null; }
+        (data.visualization_offers || []).forEach(offer => renderArtifactButton(artifactHost, offer));
+        window.verimath.artifacts.followups(pending.closest('.msg-row'), data);
+        window.verimath.artifacts.watchDiscovery(data.visualization_state === 'checking' || data.followups_state === 'checking');
         appendFeedbackBar(pending, query, data);
+        // 帮助阶梯旁注：插在本条回答之后、反馈条之后，作为可点击的追问入口
+        if (window.verimath && window.verimath._coachNote) {
+          pending.appendChild(window.verimath._coachNote);
+          window.verimath._coachNote = null;
+        }
         loadHistory().catch(() => {});
         loadStatus().catch(() => {});
         loadContext().catch(() => {});
+        if (window.verimath && window.verimath.refreshProfile) {
+          try { window.verimath.refreshProfile(); } catch (_) { }
+        }
       } catch (error) {
         aborted = (error && error.name === 'AbortError');
         pending.classList.remove('pending');
         if (aborted) {
+          closeActivity('stopped');
           pending.innerHTML = renderMarkdown((acc || '（已停止）') + '\n\n> ⏹ 已停止生成。');
-          if (currentReasoning) { finalizeReasoning(currentReasoning, 'stopped'); currentReasoning = null; }
         } else {
+          closeActivity('stopped');
           pending.innerHTML = renderMarkdown(`请求失败：${error.message}`);
-          if (reasoningHost && reasoningHost.parentNode) reasoningHost.remove();
         }
         typesetMath(pending);
+        if (finalData) appendSourcesToMessage(pending, finalData);
       } finally {
         isStreaming = false;
         abortController = null;
@@ -918,6 +1202,7 @@
         sendButton.hidden = false;    /* 恢复发送按钮 */
         stopButton.hidden = true;
         syncComposerState();
+        settle();
       }
     }
 
@@ -969,47 +1254,34 @@
 
     composer.addEventListener('submit', event => {
       event.preventDefault();
-      if (isStreaming) return;
+      if (isStreaming || isRestoring) return;
       const query = queryInput.value.trim();
       if (!query) return;
       queryInput.value = '';
-      queryInput.style.height = 'auto';
       syncComposerState();
       ask(query);
     });
 
-    clearContextButton.addEventListener('click', async () => {
-      if (isStreaming) return;
-      clearContextButton.disabled = true;
-      try {
-        await fetch('/api/panel/clear-context', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({session_id: sessionId}),
-        });
-        try { window.localStorage.removeItem('agent-session-id'); } catch (_) {}
-        sessionId = getSessionId();
-        messages.innerHTML = '';
-        addMessage('assistant', '已开始新对话，上文已清空。');
-        loadContext().catch(() => {});
-      } catch (error) {
-        addMessage('assistant', `清空上下文失败：${error.message}`);
-      } finally {
-        clearContextButton.disabled = false;
-      }
+    document.getElementById('newConversation').addEventListener('click', async () => {
+      const next = 'panel-' + crypto.randomUUID();
+      await restoreSession(next, { fresh: true });
     });
 
-    document.querySelectorAll('.quick, .welcome-prompt').forEach(button => {
+    document.querySelectorAll('.quick').forEach(button => {
       button.addEventListener('click', () => {
         queryInput.value = button.dataset.q;
         queryInput.focus();
         queryInput.dispatchEvent(new Event('input', {bubbles: true}));
       });
     });
+    messages.addEventListener('click', event => {
+      const button = event.target.closest('.welcome-prompt');
+      if (button?.dataset.q) { queryInput.value = button.dataset.q; queryInput.focus(); syncComposerState(); }
+    });
 
     document.querySelectorAll('#styleSelector .segment').forEach(button => {
       button.addEventListener('click', () => {
-        answerStyle = button.dataset.style || 'rigorous';
+        answerStyle = button.dataset.style || 'concise';
         document.querySelectorAll('#styleSelector .segment').forEach(item => item.classList.remove('active'));
         button.classList.add('active');
         try { window.localStorage.setItem('agent-answer-style', answerStyle); } catch (_) {}
@@ -1017,8 +1289,8 @@
     });
     // 恢复已保存的输出模式
     (function initAnswerStyle() {
-      let s = 'rigorous';
-      try { s = window.localStorage.getItem('agent-answer-style') || 'rigorous'; } catch (_) {}
+      let s = 'concise';
+      try { s = window.localStorage.getItem('agent-answer-style') || 'concise'; } catch (_) {}
       answerStyle = s;
       document.querySelectorAll('#styleSelector .segment').forEach(item => {
         item.classList.toggle('active', item.dataset.style === s);
@@ -1047,7 +1319,10 @@
       setNav(n);
     })();
     document.querySelectorAll('.nav-item').forEach(b => {
-      b.addEventListener('click', () => setNav(b.dataset.nav));
+      b.addEventListener('click', () => {
+        setNav(b.dataset.nav);
+        if (window.innerWidth <= 860 && typeof closeDrawer === 'function') closeDrawer();
+      });
     });
 
     // ------------------------------------------------------------
@@ -1055,10 +1330,10 @@
     // ------------------------------------------------------------
     function setMode(mode) {
       document.body.setAttribute('data-mode', mode);
+      document.documentElement.setAttribute('data-mode', mode);
       if (modelModeToggle) modelModeToggle.checked = (mode === 'dev');
       if (topbarMode) topbarMode.textContent = mode === 'dev' ? '开发视图' : '专注模式';
       try { window.localStorage.setItem('agent-ui-mode', mode); } catch (_) {}
-      requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
     }
     (function initMode() {
       let m = 'user';
@@ -1080,48 +1355,17 @@
       historyList.querySelectorAll('.record-item').forEach((node, i) => {
         const item = items[i];
         if (!item) return;
-        const hay = (item.query || '') + ' ' + (item.route || '');
+        const hay = item.title || '';
         node.style.display = (!kw || hay.toLowerCase().includes(kw)) ? '' : 'none';
       });
     }
     if (topSearch) {
       topSearch.addEventListener('input', () => {
-        if (topSearch.value) setNav('archives');
         filterHistory(topSearch.value);
       });
     }
 
-    // ------------------------------------------------------------
-    // 左侧抽屉（移动端）：汉堡按钮开关
-    // ------------------------------------------------------------
-    const drawerToggle = document.getElementById('drawerToggle');
-    const drawerClose = document.getElementById('drawerClose');
-    const drawerBackdrop = document.createElement('div');
-    drawerBackdrop.className = 'drawer-backdrop';
-    document.body.appendChild(drawerBackdrop);
-    const sideEl = document.querySelector('.side');
-    function openDrawer() {
-      if (!sideEl) return;
-      sideEl.classList.add('open');
-      drawerBackdrop.classList.add('show');
-    }
-    function closeDrawer() {
-      if (!sideEl) return;
-      sideEl.classList.remove('open');
-      drawerBackdrop.classList.remove('show');
-    }
-    if (drawerToggle) drawerToggle.addEventListener('click', () => {
-      sideEl.classList.contains('open') ? closeDrawer() : openDrawer();
-    });
-    if (drawerClose) drawerClose.addEventListener('click', closeDrawer);
-    drawerBackdrop.addEventListener('click', closeDrawer);
-    // 切到开发者模式时收起抽屉（dev 模式 .side 是常驻栏）
-    if (modelModeToggle) {
-      modelModeToggle.addEventListener('change', () => { if (modelModeToggle.checked) closeDrawer(); });
-    }
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && sideEl && sideEl.classList.contains('open')) closeDrawer();
-    });
+    function closeDrawer() { window.verimath.layout.closeSide(); }
 
     // ------------------------------------------------------------
     // 输入条快捷 chips：data-q 直接发送
@@ -1133,7 +1377,6 @@
         queryInput.value = q;
         ask(q);
         queryInput.value = '';
-        queryInput.style.height = 'auto';
         syncComposerState();
       });
     });
@@ -1208,6 +1451,37 @@
     const canvasModal = document.getElementById('canvasModal');
     const canvasModalBody = document.getElementById('canvasModalBody');
     const canvasModalTitle = document.getElementById('canvasModalTitle');
+    let expandedArtifact = null;
+    function closeExpandedArtifact() {
+      if (!expandedArtifact) return;
+      const { card, close, focus, scroll, slot, minHeight } = expandedArtifact;
+      expandedArtifact = null;
+      if (card.matches(':popover-open')) card.hidePopover();
+      card.removeAttribute('popover'); card.classList.remove('artifact-expanded'); close.remove();
+      card._redraw?.();
+      slot.style.minHeight = minHeight;
+      messages.scrollTop = scroll;
+      focus?.focus({ preventScroll: true });
+    }
+    function openArtifactModal(card, title) {
+      closeExpandedArtifact();
+      const close = document.createElement('button'); close.type = 'button';
+      close.className = 'artifact-action artifact-close'; close.textContent = '退出放大';
+      close.addEventListener('click', closeExpandedArtifact);
+      const slot = card.parentElement;
+      const minHeight = slot.style.minHeight;
+      slot.style.minHeight = slot.getBoundingClientRect().height + 'px';
+      expandedArtifact = { card, close, focus: document.activeElement, scroll: messages.scrollTop, slot, minHeight };
+      card.querySelector('.artifact-actions').appendChild(close);
+      card.classList.add('artifact-expanded');
+      card.classList.remove('artifact-folded');
+      // Popover keeps the same DOM and iframe browsing context, preserving all controls.
+      card.setAttribute('popover', 'manual'); card.showPopover();
+      close.focus({ preventScroll: true });
+    }
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && expandedArtifact) { event.preventDefault(); closeExpandedArtifact(); }
+    });
     function openCanvasModal(html, title) {
       canvasModalTitle.textContent = title || '可视化组件';
       canvasModalBody.innerHTML = '';
@@ -1265,7 +1539,7 @@
       setTimeout(() => document.getElementById('notesText').focus(), 50);
     }
     document.getElementById('openNotes').addEventListener('click', openNotesModal);
-    document.getElementById('composerNotes').addEventListener('click', openNotesModal);
+
     document.getElementById('notesModalClose').addEventListener('click', () => closeModal(notesModal));
     notesModal.addEventListener('click', e => { if (e.target === notesModal) closeModal(notesModal); });
     notesSubmit.addEventListener('click', async () => {
@@ -1304,9 +1578,29 @@
 
     // textarea 自适应高度
     queryInput.addEventListener('input', function () {
-      this.style.height = 'auto';
-      this.style.height = Math.min(this.scrollHeight, 160) + 'px';
       syncComposerState();
+    });
+    // Only width changes trigger this observer; resizing the textarea itself
+    // must not create a height feedback loop.
+    let composerWidth = 0, composerResizeFrame = 0;
+    const scheduleComposerResize = () => {
+      cancelAnimationFrame(composerResizeFrame);
+      composerResizeFrame = requestAnimationFrame(resizeComposer);
+    };
+    const composerObserver = new ResizeObserver(entries => {
+      const width = entries[0].contentRect.width;
+      if (Math.abs(width - composerWidth) > .5) {
+        composerWidth = width;
+        scheduleComposerResize();
+      }
+    });
+    composerObserver.observe(composer);
+    window.addEventListener('resize', scheduleComposerResize);
+    window.visualViewport?.addEventListener('resize', scheduleComposerResize);
+    queryInput.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      if (!sendButton.disabled) composer.requestSubmit();
     });
 
     // 渲染所有 [data-icon] 占位为内联 SVG + MutationObserver 动态补渲染
@@ -1337,14 +1631,14 @@
         'theme.light': '浅色', 'theme.dark': '深色', 'theme.auto': '自动',
         'settings.font_size': '字体大小', 'settings.font_size.hint': '正文字号缩放',
         'font_size.sm': '小', 'font_size.md': '中', 'font_size.lg': '大', 'font_size.xl': '特大',
-        'settings.font_family': '正文字体', 'settings.font_family.hint': '衬线 / 无衬线',
+        'settings.font_family': '界面字体', 'settings.font_family.hint': '统一字形，提升阅读稳定性',
         'font_family.serif': '衬线', 'font_family.sans': '无衬线',
         'settings.bg_animation': '背景动效', 'settings.bg_animation.hint': 'WebGL 网格动画',
         'settings.agent': '智能体', 'settings.use_model': '使用模型', 'settings.use_model.hint': '关闭时只用离线路由答案',
         'settings.output_mode': '输出模式', 'settings.output_mode.hint': '回答风格偏好',
         'output.rigorous': '严谨', 'output.examples': '举例', 'output.concise': '简洁', 'output.caveman': '极简',
         'settings.show_thinking': '显示思考链', 'settings.show_thinking.hint': '展示模型推理过程',
-        'settings.auto_artifact': '自动生成组件', 'settings.auto_artifact.hint': '关闭后需手动点击生成',
+        'settings.auto_artifact': '自动展开可视化', 'settings.auto_artifact.hint': '关闭后只显示「生成可视化」按钮',
         'settings.language': '语言', 'settings.ui_language': '界面语言',
         'settings.service_status': '服务状态', 'settings.notes': '笔记'
       },
@@ -1354,14 +1648,14 @@
         'theme.light': 'Light', 'theme.dark': 'Dark', 'theme.auto': 'Auto',
         'settings.font_size': 'Font Size', 'settings.font_size.hint': 'Body text scaling',
         'font_size.sm': 'Sm', 'font_size.md': 'Md', 'font_size.lg': 'Lg', 'font_size.xl': 'XL',
-        'settings.font_family': 'Font Family', 'settings.font_family.hint': 'Serif / Sans-serif',
+        'settings.font_family': 'Interface Font', 'settings.font_family.hint': 'One clear type system for reading',
         'font_family.serif': 'Serif', 'font_family.sans': 'Sans',
         'settings.bg_animation': 'Background', 'settings.bg_animation.hint': 'WebGL grid animation',
         'settings.agent': 'Agent', 'settings.use_model': 'Use Model', 'settings.use_model.hint': 'Offline routing only when off',
         'settings.output_mode': 'Output Mode', 'settings.output_mode.hint': 'Answer style preference',
         'output.rigorous': 'Rigorous', 'output.examples': 'Examples', 'output.concise': 'Concise', 'output.caveman': 'Terse',
         'settings.show_thinking': 'Show Thinking', 'settings.show_thinking.hint': 'Display model reasoning',
-        'settings.auto_artifact': 'Auto Artifact', 'settings.auto_artifact.hint': 'Manual click required when off',
+        'settings.auto_artifact': 'Auto-expand visuals', 'settings.auto_artifact.hint': 'Off: show a button instead',
         'settings.language': 'Language', 'settings.ui_language': 'UI Language',
         'settings.service_status': 'Service Status', 'settings.notes': 'Notes'
       }
@@ -1371,8 +1665,8 @@
       _store: {},
       _key: 'agent-settings-v1',
       _defaults: {
-        theme: 'light', fontScale: '0.8', fontFamily: 'serif', language: 'zh',
-        bgAnimation: true, showThinking: true, autoArtifact: true
+        theme: 'light', fontScale: '1', fontFamily: 'sans', language: 'zh',
+        bgAnimation: false, showThinking: false, autoArtifact: false
       },
       _listeners: {},
       load() {
@@ -1400,11 +1694,13 @@
       }
     };
     settings.load();
-    // 旧版 fontScale 值（如 1）已不在可选项内，迁移到新默认中字号
+    settings._store.autoArtifact = false;
+    settings._store.bgAnimation = false;
+    // 未支持的旧字号值迁移到默认中字号。
     (function migrateFontScale() {
-      const valid = ['0.7', '0.8', '0.95', '1.15'];
+      const valid = ['0.85', '1', '1.1', '1.25'];
       if (!valid.includes(String(settings.get('fontScale')))) {
-        settings._store.fontScale = '0.8';
+        settings._store.fontScale = '1';
         settings.save();
       }
     })();
@@ -1419,6 +1715,9 @@
     function applyTheme(theme) {
       const resolved = resolveTheme(theme);
       document.documentElement.setAttribute('data-theme', resolved);
+      for (const frame of canvasFrames.values()) {
+        frame.contentWindow?.postMessage({ source: 'verimath-host', type: 'theme', dark: resolved === 'dark' }, '*');
+      }
       if (window.bgCanvas) window.bgCanvas.setDark(resolved === 'dark');
     }
     function applyFontScale(scale) {
@@ -1519,3 +1818,17 @@
     });
     loadContext().catch(() => {});
     syncComposerState();
+
+    // 学习助手（study.js）的接口：提问与当前会话 id。
+    // 放在 IIFE 末尾赋值，此时 ask / sessionId 都已初始化。
+    window.verimath = window.verimath || {};
+    window.verimath.ask = ask;
+    window.verimath.getSessionId = () => sessionId;
+    window.verimath.isChatBusy = () => isStreaming || isRestoring;
+    window.verimath.mountArtifact = mountArtifact;
+    window.verimath.disposeArtifacts = disposeArtifacts;
+    window.verimath.ensureCompanion = ensureCompanion;
+    window.verimath.restoreSession = restoreSession;
+    window.verimath.typesetMath = typesetMath;
+    window.verimath.renderMarkdown = renderMarkdown;
+    restoreSession(sessionId);

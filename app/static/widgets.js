@@ -106,6 +106,124 @@
     return c;
   }
 
+  /**
+   * 显式高度：只有当调用方真的需要固定高度时才用。
+   *
+   * 默认让 canvas 撑满父容器、父容器再按可用宽度反推高度 —— 硬编码 320/400
+   * 会让小屏溢出、大屏只剩一条扁带，这正是"框框太大、图很小"的根源。
+   */
+  function makeCanvasFit(container, specHeight) {
+    var width = container.clientWidth || 640;
+    var height = specHeight || Math.max(200, Math.min(380, Math.round(width * 0.5)));
+    var c = makeCanvas(container, height);
+    c.style.width = '100%';
+    c.style.height = height + 'px';
+    container._fitCanvas = c;
+    return c;
+  }
+
+  /**
+   * 按父容器宽度定高（可持久重绑定，容器被清空后仍可再调）。
+   * 返回实际使用的 css 高度；container 宽为 0 时退回 fallback。
+   */
+  function fitCanvasHeight(canvas, fallback, opts) {
+    if (!canvas || !canvas.parentNode) return fallback || 300;
+    opts = opts || {};
+    var w = canvas.parentNode.clientWidth || canvas.parentNode.getBoundingClientRect().width;
+    if (!w) return fallback || 300;
+    var ratio = opts.ratio || 0.58;
+    var ratioH = Math.round(w * ratio);
+    var h = Math.min(opts.max || 380, ratioH);
+    h = Math.max(opts.min || 200, h);
+    canvas.style.width = '100%';
+    canvas.style.height = h + 'px';
+    return h;
+  }
+
+  // ------------------------------------------------- 轻量 LaTeX → HTML
+  //
+  // 图注/提示里的公式现在是纯文本（"Δ = 3；(−b ± √Δ)/(2a)"），学生看到的
+  // 是一串符号而不是公式。这里不引 KaTeX 依赖，只做教学场景最常见的
+  // 下标、上标、希腊字母与几个关系符 —— 生成的是真 HTML（<sub>/<sup>），
+  // 因此比 LaTeX 源码可读，又不需要额外字体与脚本。
+
+  var TEX_SYMBOLS = [
+    [/\\Delta/g, 'Δ'], [/\\alpha/g, 'α'], [/\\beta/g, 'β'], [/\\gamma/g, 'γ'],
+    [/\\delta/g, 'δ'], [/\\epsilon/g, 'ε'], [/\\varepsilon/g, 'ε'], [/\\theta/g, 'θ'],
+    [/\\lambda/g, 'λ'], [/\\mu/g, 'μ'], [/\\nu/g, 'ν'], [/\\pi/g, 'π'],
+    [/\\rho/g, 'ρ'], [/\\sigma/g, 'σ'], [/\\tau/g, 'τ'], [/\\phi/g, 'φ'],
+    [/\\varphi/g, 'φ'], [/\\chi/g, 'χ'], [/\\psi/g, 'ψ'], [/\\omega/g, 'ω'],
+    [/\\times/g, '×'], [/\\cdot/g, '·'], [/\\div/g, '÷'], [/\\pm/g, '±'],
+    [/\\mp/g, '∓'], [/\\le/g, '≤'], [/\\leq/g, '≤'], [/\\ge/g, '≥'], [/\\geq/g, '≥'],
+    [/\\ne/g, '≠'], [/\\neq/g, '≠'], [/\\approx/g, '≈'], [/\\equiv/g, '≡'],
+    [/\\infty/g, '∞'], [/\\to/g, '→'], [/\\rightarrow/g, '→'], [/\\Rightarrow/g, '⇒'],
+    [/\\Leftrightarrow/g, '⇔'], [/\\in/g, '∈'], [/\\sqrt/g, '√'], [/\\sum/g, '∑'],
+    [/\\int/g, '∫'], [/\\hat\{([^{}]*)\}/g, '$1̂'], [/\\bar\{([^{}]*)\}/g, '$1̄']
+  ];
+
+  function escapePlain(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /**
+   * renderTex(text) → HTML 字符串。
+   *
+   * 只处理 $...$ / \(...\) / 裸露的 \指令；普通文字原样保留（HTML 转义后）。
+   * 下标 x_{1}、x^2 都转成 <sub>/<sup>，这是"代码语言"和"公式"的差别所在。
+   */
+  function renderTex(text) {
+    var src = String(text == null ? '' : text);
+    if (!src) return '';
+
+    function convert(expr) {
+      var out = escapePlain(expr);
+      out = out.replace(/\\left|\\right/g, '');
+      out = out.replace(/\\\s*[,\;!]/g, ' ');
+      out = out.replace(/\\ /g, ' ');
+      // 分式 / 根号要从内向外剥：先处理最内层花括号，递归直到不再变化
+      for (var guard = 0; guard < 6; guard++) {
+        var before = out;
+        out = out.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g,
+          '<span class="tex-frac"><span>$1</span><span>$2</span></span>');
+        out = out.replace(/\\sqrt\{([^{}]*)\}/g, '√<span class="tex-rad">$1</span>');
+        if (out === before) break;
+      }
+      for (var i = 0; i < TEX_SYMBOLS.length; i++) out = out.replace(TEX_SYMBOLS[i][0], TEX_SYMBOLS[i][1]);
+      out = out.replace(/([_^])\{([^{}]*)\}/g, function (m, op, body) {
+        return op === '_' ? '<sub>' + body + '</sub>' : '<sup>' + body + '</sup>';
+      });
+      out = out.replace(/([_^])([A-Za-z0-9+\-−])/g, function (m, op, body) {
+        return op === '_' ? '<sub>' + body + '</sub>' : '<sup>' + body + '</sup>';
+      });
+      out = out.replace(/\\([A-Za-z]+)/g, '$1');
+      // 残留的花括号只去掉符号，内容保留（避免 {2a} 这种裸括号露出来）
+      out = out.replace(/[{}]/g, '');
+      return out;
+    }
+
+    var html = '';
+    var last = 0;
+    var re = /\$\$([\s\S]+?)\$\$|\$([^$]+)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
+    var m;
+    while ((m = re.exec(src)) !== null) {
+      html += convert(src.slice(last, m.index));
+      var body = m[1] != null ? m[1] : (m[2] != null ? m[2] : (m[3] != null ? m[3] : m[4]));
+      html += '<span class="tex">' + convert(body) + '</span>';
+      last = re.lastIndex;
+    }
+    html += convert(src.slice(last));
+    return html;
+  }
+
+  /** 把一段文字里的公式转成 HTML 后写进元素（不经过 innerHTML 的用户输入风险：全程转义）。 */
+  function setTexContent(el, text) {
+    if (!el) return;
+    var hasTex = /\$|\\\(|\\[A-Za-z]|[_^]\{/.test(String(text == null ? '' : text));
+    if (!hasTex) { el.textContent = String(text == null ? '' : text); return; }
+    el.innerHTML = renderTex(text);
+  }
+
   function fmtP(p) {
     if (p < 1e-4) return p.toExponential(2);
     return p.toFixed(4);
@@ -168,7 +286,7 @@
       var sp = spec.params || {};
       var fam = sp.family;
       var pars = Object.assign({}, sp.params, state || {});
-      var canvas = makeCanvas(container, 320);
+      var canvas = makeCanvasFit(container);
 
       if (fam === 'binom' || fam === 'poisson') {
         return renderDiscrete(canvas, fam, pars, sp);
@@ -289,7 +407,7 @@
       var alpha = sp.alpha === undefined ? 0.05 : sp.alpha;
       var alt = sp.alternative || 'two-sided';
       var stat = sp.statistic;
-      var canvas = makeCanvas(container, 340);
+      var canvas = makeCanvasFit(container);
 
       var pdf, cdf, sf, ppf, xLo, xHi, twoTailSymmetric;
       if (test === 'z') {
@@ -462,7 +580,7 @@
       wrap.appendChild(right);
 
       // 左：总体形状 —— 关键教学点是"总体不正态也没关系"
-      var cPop = makeCanvas(left, 190);
+      var cPop = makeCanvasFit(left);
       var popBins = P.makeBins(popSample, { rule: 'fd' });
       var popMax = 0;
       popBins.forEach(function (b) { if (b.density > popMax) popMax = b.density; });
@@ -475,7 +593,7 @@
       cPop.setAttribute('aria-label', '总体分布的直方图，形状为 ' + sp.population);
 
       // 右：统计量的抽样分布 + 正态参考
-      var cStat = makeCanvas(right, 190);
+      var cStat = makeCanvasFit(right);
       var bins = P.makeBins(stats, { rule: 'fd' });
       var sMean = S.mean(stats);
       var sSd = stats.length > 1 ? S.stdev(stats) : 1;
@@ -504,9 +622,9 @@
 
       var note = document.createElement('div');
       note.className = 'artifact-note';
-      note.textContent = 'n = ' + n + '：抽样分布标准差 ' + sSd.toFixed(4) +
+      setTexContent(note, 'n = ' + n + '：抽样分布标准差 ' + sSd.toFixed(4) +
         '（理论标准误 ≈ ' + (1 / Math.sqrt(n)).toFixed(4) + '）。' +
-        '注意左图形状不变，右图随 n 增大越来越接近钟形 —— 这才是中心极限定理说的事。';
+        '注意左图形状不变，右图随 n 增大越来越接近钟形 —— 这才是中心极限定理说的事。');
       container.appendChild(note);
       return { mean: sMean, sd: sSd };
     }
@@ -548,7 +666,7 @@
       }
 
       container.innerHTML = '';
-      var canvas = makeCanvas(container, Math.min(460, 60 + reps * 7));
+      var canvas = makeCanvasFit(container);
       var allLo = Math.min.apply(null, rows.map(function (r) { return r.lo; }));
       var allHi = Math.max.apply(null, rows.map(function (r) { return r.hi; }));
       var g = P.setup(canvas, {
@@ -578,10 +696,10 @@
 
       var note = document.createElement('div');
       note.className = 'artifact-note';
-      note.textContent = '红色区间没盖住真值。置信水平说的是"这个造区间的程序，' +
+      setTexContent(note, '红色区间没盖住真值。置信水平说的是"这个造区间的程序，' +
         '长期重复下有约 ' + (level * 100).toFixed(0) + '% 的区间会盖住真值"，' +
         '而不是"某一条给定区间有 ' + (level * 100).toFixed(0) + '% 的概率盖住真值"' +
-        '—— 真值是固定的，随机的是区间。';
+        '—— 真值是固定的，随机的是区间。');
       container.appendChild(note);
       return { coverage: rate };
     }
@@ -610,7 +728,7 @@
       var alpha = sp.alpha || 0.05;
       var alt = sp.alternative || 'two-sided';
       var target = sp.target_power || 0.8;
-      var canvas = makeCanvas(container, 320);
+      var canvas = makeCanvasFit(container);
 
       var xMin, xMax, fn, xLabel;
       if (axis === 'n') {
@@ -716,7 +834,7 @@
       var sp = spec.params || {};
       var x = sp.x, y = sp.y;
       var fit = linreg(x, y);
-      var canvas = makeCanvas(container, 320);
+      var canvas = makeCanvasFit(container);
       var xLo = Math.min.apply(null, x), xHi = Math.max.apply(null, x);
       var yLo = Math.min.apply(null, y), yHi = Math.max.apply(null, y);
       var padX = (xHi - xLo) * 0.08 || 1, padY = (yHi - yLo) * 0.12 || 1;
@@ -772,8 +890,8 @@
 
       var note = document.createElement('div');
       note.className = 'artifact-note';
-      note.textContent = 'R² 只说明线性模型解释了多少变异，不说明因果方向，' +
-        '也不保证模型正确 —— 残差图和散点形状比 R² 更能暴露问题。';
+      setTexContent(note, 'R² 只说明线性模型解释了多少变异，不说明因果方向，' +
+        '也不保证模型正确 —— 残差图和散点形状比 R² 更能暴露问题。');
       container.appendChild(note);
       return { slope: fit.slope, r2: fit.r2 };
     }
@@ -821,7 +939,7 @@
       series.forEach(function (s) { all = all.concat(s.values); });
       var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
       var pad = (hi - lo) * 0.08 || 1;
-      var canvas = makeCanvas(container, kind === 'box' ? Math.max(160, 60 + series.length * 54) : 300);
+      var canvas = makeCanvasFit(container);
 
       if (kind === 'box' || kind === 'violin') {
         var g = P.setup(canvas, {
@@ -920,11 +1038,11 @@
 
       var note = document.createElement('div');
       note.className = 'artifact-note';
-      note.textContent = series.map(function (s) {
+      setTexContent(note, series.map(function (s) {
         var v = s.values;
         return (s.label || '数据') + '：n=' + v.length + '，均值 ' +
           S.mean(v).toFixed(3) + (v.length > 1 ? '，标准差 ' + S.stdev(v).toFixed(3) : '');
-      }).join('　|　');
+      }).join('　|　'));
       container.appendChild(note);
       return {};
     }
@@ -946,7 +1064,7 @@
       var sp = spec.params || {};
       var items = sp.items || [];
       var nullVal = sp.null_value === undefined ? 0 : sp.null_value;
-      var canvas = makeCanvas(container, Math.max(150, 56 + items.length * 34));
+      var canvas = makeCanvasFit(container);
       var lo = Math.min.apply(null, items.map(function (d) { return d.ci_low; }).concat([nullVal]));
       var hi = Math.max.apply(null, items.map(function (d) { return d.ci_high; }).concat([nullVal]));
       var pad = (hi - lo) * 0.12 || 0.5;
@@ -973,12 +1091,246 @@
 
       var note = document.createElement('div');
       note.className = 'artifact-note';
-      note.textContent = '灰色区间跨过了"无效应"参考线（等价于在该水平下不显著）。' +
-        '区间宽度反映估计精度 —— 一个"显著但区间极宽"的结果，实际信息量很低。';
+      setTexContent(note, '灰色区间跨过了"无效应"参考线（等价于在该水平下不显著）。' +
+        '区间宽度反映估计精度 —— 一个"显著但区间极宽"的结果，实际信息量很低。');
       container.appendChild(note);
       return {};
     }
   };
+
+  // ------------------------------------- 9. 函数图像（一次 / 二次 / 三次）
+
+  /**
+   * 函数族 → f(x)。
+   * power / exponential / log 走单参数 a，b 作底数或指数用。
+   */
+  function fnFor(family, p) {
+    var a = num(p.a, 1), b = num(p.b, 0), c = num(p.c, 0);
+    switch (family) {
+      case 'linear': return function (x) { return a * x + c; };
+      case 'cubic': return function (x) { return a * x * x * x + b * x * x + c * x; };
+      case 'power': return function (x) { return a * Math.pow(x, b || 2); };
+      case 'exponential': return function (x) { return a * Math.pow(b > 1 || b < 1 ? b : 2, x); };
+      case 'log': return function (x) { return x > 0 ? a * Math.log(x) / Math.log(b > 1 ? b : Math.E) : NaN; };
+      default: return function (x) { return a * x * x + b * x + c; };
+    }
+  }
+
+  function num(v, fallback) {
+    var n = Number(v);
+    return isFinite(n) ? n : fallback;
+  }
+
+  var functionPlot = {
+    controls: function (spec) {
+      var p = spec.params || {};
+      var fam = p.family || 'quadratic';
+      var wanted = p.interactive || [];
+      var all = {
+        linear: [
+          ctl('a', 'k（斜率）', -5, 5, 0.1, num(p.a, 1)),
+          ctl('c', 'b（截距）', -10, 10, 0.5, num(p.c, 0))
+        ],
+        quadratic: [
+          ctl('a', 'a（开口与胖瘦）', -3, 3, 0.1, num(p.a, 1)),
+          ctl('b', 'b（左右平移）', -10, 10, 0.5, num(p.b, 0)),
+          ctl('c', 'c（上下平移）', -10, 10, 0.5, num(p.c, 0))
+        ],
+        cubic: [
+          ctl('a', 'a（三次项系数）', -2, 2, 0.1, num(p.a, 1)),
+          ctl('b', 'b（二次项系数）', -5, 5, 0.5, num(p.b, 0)),
+          ctl('c', 'c（一次项系数）', -5, 5, 0.5, num(p.c, 0))
+        ],
+        power: [
+          ctl('a', 'a（系数）', -3, 3, 0.1, num(p.a, 1)),
+          ctl('b', 'n（指数）', -3, 4, 0.1, num(p.b, 2))
+        ],
+        exponential: [
+          ctl('a', 'a（系数）', -3, 3, 0.1, num(p.a, 1)),
+          ctl('b', '底数', 0.2, 4, 0.1, num(p.b, 2))
+        ],
+        log: [ctl('a', 'a（系数）', -3, 3, 0.1, num(p.a, 1))]
+      };
+      var list = all[fam] || all.quadratic;
+      if (!wanted.length) return list;
+      return list.filter(function (c) { return wanted.indexOf(c.key) >= 0; });
+    },
+
+    render: function (container, spec, state) {
+      var sp = spec.params || {};
+      var pars = Object.assign({}, sp.params, state || {});
+      var fam = sp.family || 'quadratic';
+      var a = num(pars.a, 1), b = num(pars.b, 0), c = num(pars.c, 0);
+      var fn = fnFor(fam, { a: a, b: b, c: c });
+
+      // x 范围：优先用题目给的定义域；否则围绕顶点/零点取一段能看清的区间
+      var xMin, xMax;
+      if (sp.x_min !== null && sp.x_min !== undefined &&
+          sp.x_max !== null && sp.x_max !== undefined) {
+        xMin = sp.x_min; xMax = sp.x_max;
+      } else if (fam === 'log' || fam === 'power') {
+        xMin = 0.05; xMax = 6;
+      } else {
+        var vertex = (fam === 'quadratic' && Math.abs(a) > 1e-9) ? -b / (2 * a) : 0;
+        var span = 5;
+        xMin = vertex - span; xMax = vertex + span;
+      }
+
+      var canvas = makeCanvasFit(container);
+      var samples = [];
+      var yMin = Infinity, yMax = -Infinity;
+      var i, x, y;
+      for (i = 0; i <= 240; i++) {
+        x = xMin + (xMax - xMin) * i / 240;
+        y = fn(x);
+        samples.push({ x: x, y: y });
+        if (isFinite(y)) {
+          if (y < yMin) yMin = y;
+          if (y > yMax) yMax = y;
+        }
+      }
+      // 对比曲线也纳入 y 范围，否则叠加上去会被裁掉
+      var compares = (sp.compare || []).map(function (item) {
+        var cf = fnFor(item.family || fam, {
+          a: num(item.a, a), b: num(item.b, b), c: num(item.c, c)
+        });
+        var pts = [];
+        for (var k = 0; k <= 240; k++) {
+          var cx = xMin + (xMax - xMin) * k / 240;
+          var cy = cf(cx);
+          pts.push({ x: cx, y: cy });
+          if (isFinite(cy) && k > 0) { if (cy < yMin) yMin = cy; if (cy > yMax) yMax = cy; }
+        }
+        return pts;
+      });
+      if (!isFinite(yMin) || !isFinite(yMax)) { yMin = -1; yMax = 1; }
+      var yPad = (yMax - yMin) * 0.14 || 1;
+      yMin -= yPad; yMax += yPad;
+      // x 轴必须在视野内：判断零点、看开口方向都靠它
+      if (yMin > 0) yMin = -yPad;
+      if (yMax < 0) yMax = yPad;
+
+      var g = P.setup(canvas, { xMin: xMin, xMax: xMax, yMin: yMin, yMax: yMax });
+      P.axes(g.ctx, g.scale, { xLabel: 'x', yLabel: 'y' });
+      if (yMin <= 0 && yMax >= 0) {
+        P.hline(g.ctx, g.scale, 0, { color: P.PALETTE.ink, width: 1.1 });
+      }
+
+      compares.forEach(function (pts, idx) {
+        drawPolyline(g, pts, P.SERIES[(idx + 1) % P.SERIES.length], 1.6, [5, 4]);
+      });
+      drawPolyline(g, samples, P.PALETTE.accent, 2.2, null);
+
+      var reading = {};
+
+      if (fam === 'quadratic' && Math.abs(a) > 1e-9) {
+        var disc = b * b - 4 * a * c;
+        var vx = -b / (2 * a), vy = a * vx * vx + b * vx + c;
+        reading = { a: a, b: b, c: c, discriminant: disc, vertex: [vx, vy] };
+
+        if (sp.show_axis !== false) {
+          P.vline(g.ctx, g.scale, vx, {
+            color: P.PALETTE.muted, dash: [3, 3], width: 1.2,
+            label: '对称轴 x=' + P.fmtTick(vx)
+          });
+        }
+        if (sp.show_vertex !== false && vy >= yMin && vy <= yMax) {
+          var ctx = g.ctx;
+          ctx.save();
+          ctx.fillStyle = P.PALETTE.accent2;
+          ctx.beginPath();
+          ctx.arc(g.scale.px(vx), g.scale.py(vy), 4, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.restore();
+          P.label(g.ctx, g.scale.px(vx), g.scale.py(vy),
+            '顶点 (' + P.fmtTick(vx) + ', ' + P.fmtTick(vy) + ')',
+            { baseline: vy > (yMin + yMax) / 2 ? 'top' : 'bottom',
+              color: P.PALETTE.accent2,
+              background: hexAlpha('#ffffff', 0.75) });
+        }
+        if (sp.show_roots !== false && disc >= 0) {
+          var sq = Math.sqrt(disc);
+          [-1, 1].forEach(function (sgn) {
+            var r = (-b + sgn * sq) / (2 * a);
+            if (r < xMin || r > xMax) return;
+            P.vline(g.ctx, g.scale, r, {
+              color: P.PALETTE.warn, dash: null, width: 1.4,
+              label: 'x=' + P.fmtTick(r)
+            });
+          });
+        }
+      }
+
+      drawLabelNote(container, spec, fam, reading, a, b, c);
+      canvas.setAttribute('aria-label',
+        '函数图像 y = ' + fmtPoly(a, b, c) + '，' +
+        (fam === 'quadratic' ? '顶点与零点已标注' : '已绘制'));
+      return reading;
+    }
+  };
+
+  /** 折线绘制：跳过 NaN / ±Infinity 造成的断点（log、奇点、无穷不连续点）。 */
+  function drawPolyline(g, pts, color, width, dash) {
+    var ctx = g.ctx;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width || 1.8;
+    if (dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
+    ctx.beginPath();
+    var started = false;
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      if (!isFinite(p.y)) { started = false; continue; }
+      // 视野外的点会画成竖线，直接断开
+      if (p.y < g.scale.yMin - 1e6 || p.y > g.scale.yMax + 1e6) { started = false; continue; }
+      var px = g.scale.px(p.x), py = g.scale.py(p.y);
+      if (!started) { ctx.moveTo(px, py); started = true; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function fmtPoly(a, b, c) {
+    function t(v, s) {
+      if (Math.abs(v) < 1e-12) return '';
+      return (v < 0 ? ' - ' : ' + ') + (Math.abs(Math.abs(v) - 1) < 1e-12 && s ?
+        '' : Math.abs(v)) + s;
+    }
+    return (t(a, 'x²') + t(b, 'x') + t(c, '')).replace(/^ \+ /, '') || '0';
+  }
+
+  /**
+   * 图下的读图提示：把图上标出来的量和代数结论对上。
+   *
+   * 这一步是教学关键 —— 学生经常"看图会、写式子不会"或反过来；
+   * 同一句里同时出现"图上看到什么"和"代数上算出什么"，两条通道才连起来。
+   */
+  function drawLabelNote(container, spec, fam, reading, a, b, c) {
+    var note = document.createElement('div');
+    note.className = 'artifact-note';
+    var text = '';
+    if (fam === 'quadratic' && reading.discriminant !== undefined) {
+      var d = reading.discriminant;
+      text = '$\\Delta = ' + d.toFixed(3).replace(/\.?0+$/, '') + '$；顶点 $(' +
+        reading.vertex[0].toFixed(2) + ',\\ ' + reading.vertex[1].toFixed(2) + ')$；' +
+        '开口' + (a > 0 ? '向上' : '向下') + '（$a ' + (a > 0 ? '> 0' : '< 0') + '$）。';
+      if (d > 1e-9) {
+        text += '$\\Delta > 0$：抛物线与 $x$ 轴有两个交点 —— 图上的两个红色标记就是方程的两个根，' +
+          '位置由 $x = \\frac{-b \\pm \\sqrt{\\Delta}}{2a}$ 决定。';
+      } else if (Math.abs(d) <= 1e-9) {
+        text += '$\\Delta = 0$：抛物线与 $x$ 轴相切，两个根重合成顶点，这就是"重根"在图上长什么样。';
+      } else {
+        text += '$\\Delta < 0$：抛物线与 $x$ 轴没有交点，说明方程没有实根。' +
+          '注意图像本身始终存在 —— "没有实根"说的是交点，不是函数值不存在。';
+      }
+    } else {
+      text = '拖动系数看图像怎么动：斜率/系数改变倾斜与弯曲，常数项只会整体上下平移。' +
+        '先预测再去拖，比直接拖动更快建立直觉。';
+    }
+    setTexContent(note, text);
+    container.appendChild(note);
+  }
 
   // ------------------------------------------------------------- 注册表
 
@@ -990,7 +1342,8 @@
     power_curve: powerCurve,
     scatter_regression: scatterRegression,
     data_plot: dataPlot,
-    effect_size: effectSize
+    effect_size: effectSize,
+    function_plot: functionPlot
   };
 
   var widgets = {
@@ -999,7 +1352,10 @@
     get: function (kind) { return WIDGETS[kind]; },
     kinds: function () { return Object.keys(WIDGETS); },
     // 供测试与调试用的内部函数
-    _internal: { linreg: linreg, boxStats: boxStats, quantile: quantile, hexAlpha: hexAlpha }
+    _internal: {
+      linreg: linreg, boxStats: boxStats, quantile: quantile, hexAlpha: hexAlpha,
+      renderTex: renderTex, fitCanvasHeight: fitCanvasHeight
+    }
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = widgets;
