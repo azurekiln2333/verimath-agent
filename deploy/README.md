@@ -34,6 +34,12 @@ Watchtower 每 600 秒检查一次正式版镜像。
 
 服务器需要 Docker Engine 和 Compose 插件。
 2 核 2GB 可用于小规模使用。保持一个应用进程。
+当前流水线发布 `linux/amd64` 镜像，适用于 x86_64 服务器。
+
+首次发布 GHCR 镜像后，在 GitHub 的 Package settings 中
+选择 Change visibility → Public。
+公开代码仓库不会自动把 GHCR 镜像改为公开。
+CNB 仓库也需要设为公开，才能按下述方式免登录下载与拉取。
 
 从仓库下载以下两个文件。
 也可直接从本地复制这两个文件。
