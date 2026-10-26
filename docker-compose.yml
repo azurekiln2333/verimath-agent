@@ -4,7 +4,7 @@ name: verimath-agent
 # Run: docker compose --env-file .env.docker up -d --pull always
 services:
   xiaoyi:
-    image: "${VERIMATH_IMAGE:-docker.cnb.cool/azurekiln/verimath-agent:latest}"
+    image: "${VERIMATH_IMAGE:-ghcr.io/azurekiln2333/verimath-agent:latest}"
     restart: unless-stopped
     init: true
     env_file:

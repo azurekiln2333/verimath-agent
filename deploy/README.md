@@ -16,8 +16,12 @@ Watchtower 每 600 秒检查一次正式版镜像。
 
 | 来源 | 镜像 |
 |---|---|
+| GitHub（默认，已验证可匿名拉取） | `ghcr.io/azurekiln2333/verimath-agent:latest` |
 | CNB | `docker.cnb.cool/azurekiln/verimath-agent:latest` |
-| GitHub | `ghcr.io/azurekiln2333/verimath-agent:latest` |
+
+CNB 镜像已构建上传，仓库公开权限仍待设置。
+在此之前使用默认 GHCR 镜像即可免登录部署和自动更新。
+CNB 设为公开后，可修改 `VERIMATH_IMAGE` 切换镜像源。
 
 普通提交和 PR 运行测试。
 推送 `v*` 标签后，两端先测试，再构建镜像。
@@ -58,8 +62,8 @@ CNB 仓库也需要设为公开，才能按下述方式免登录下载与拉取�
 ```bash
 mkdir -p /opt/verimath-agent
 cd /opt/verimath-agent
-curl -fL https://cnb.cool/azurekiln/verimath-agent/-/raw/main/docker-compose.yml -o docker-compose.yml
-curl -fL https://cnb.cool/azurekiln/verimath-agent/-/raw/main/.env.docker.example -o .env.docker.example
+curl -fL https://raw.githubusercontent.com/azurekiln2333/verimath-agent/main/docker-compose.yml -o docker-compose.yml
+curl -fL https://raw.githubusercontent.com/azurekiln2333/verimath-agent/main/.env.docker.example -o .env.docker.example
 cp .env.docker.example .env.docker
 nano .env.docker
 ```
@@ -173,9 +177,9 @@ docker --config ./registry-auth compose --env-file .env.docker -f docker-compose
 容器中通常没有对应的凭据助手。
 更新令牌后，重建 Watchtower 以重新加载认证文件。
 
-GHCR 镜像同样可用。
-将 `VERIMATH_IMAGE` 改为 GHCR 地址。
-随后登录 `ghcr.io`，并使用上面的启动方式。
+默认 GHCR 镜像已经公开，无需登录。
+如果将来改用其他私有 GHCR 镜像，可登录 `ghcr.io`，
+并使用上面的专用认证文件与启动方式。
 
 ## 自定义知识库
 
@@ -244,7 +248,7 @@ git push cnb main v0.1.0
 GitHub 使用 `.github/workflows/build-and-release.yml`。
 CNB 使用 `.cnb.yml`，由平台提供构建令牌。
 两端分别发布 GHCR 与 CNB 镜像。
-服务器默认从 CNB 拉取。
+服务器默认从已经公开的 GHCR 拉取。
 
 不要把模型密钥配置到构建变量中。
 模型密钥只保存在服务器的 `.env.docker`。
