@@ -9,7 +9,7 @@ GitHub 和 CNB 按版本标签构建并发布镜像。
 首次启动会自动建立空数据库的知识索引。
 
 完整步骤见 [镜像部署文档](deploy/README.md)。
-服务器只需 Compose 文件、`.env.docker` 和数据目录。
+服务器只需 Compose 文件、`.env` 和数据目录（兼容旧 `.env.docker`）。
 源码构建使用单独的 `docker-compose.build.yml`。
 
 技术栈：Python 3.11+、FastAPI、Uvicorn、SQLite、SymPy，
@@ -89,7 +89,7 @@ $env:DEEPSEEK_API_KEY = "只在本机终端里填写，不写入文件"
 $env:MODEL_ENABLED = "true"
 ```
 
-默认启用模型：配置 `MODEL_API_KEY` 或 `DEEPSEEK_API_KEY` 后，普通聊天会调用模型，由模型决定是否使用工具。需要离线调试时可显式设置 `MODEL_ENABLED=false`，或关闭面板设置中的「使用模型」。未配置密钥或模型调用失败时保留规则回答作为降级；自动化测试单独关闭真实模型调用。
+默认启用模型：配置 `MODEL_API_KEY` 或 `DEEPSEEK_API_KEY` 后，普通聊天会调用模型，由模型决定是否使用工具。需要离线调试时可显式设置 `MODEL_ENABLED=false`，或关闭面板设置中的「使用模型」。未配置密钥时可使用离线规则回答；模型调用失败会显示具体错误并保留本地已核验的计算结果；自动化测试单独关闭真实模型调用。
 
 项目启动时会自动读取本地 `.env`，但 `.env` 已被 `.gitignore` 排除，不要提交密钥。
 

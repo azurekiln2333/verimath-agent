@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent_runtime import iterate_agent
+from app.agent_runtime import is_smalltalk, iterate_agent
 from app.model_client import ChatResult, ModelMessage, StreamEvent, ToolCall
 from app.tools.base import ToolResult
 from app.tools.registry import ToolRegistry
@@ -23,6 +23,38 @@ class DoubleTool:
 
     async def run(self, n):
         return ToolResult(str(n * 2), summary={"n": n * 2})
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("你好！", True), (" Hello! ", True), ("谢谢", True),
+    ("你好，请算一下这个积分", False), ("谢谢，继续解释中心极限定理", False), ("hi(x)=x^2", False),
+])
+def test_only_standalone_smalltalk_uses_short_model_request(query, expected):
+    assert is_smalltalk(query) is expected
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_smalltalk_makes_one_real_model_request_without_thinking_or_tools(streaming):
+    calls = []
+
+    async def chat(messages, **kwargs):
+        calls.append((messages, kwargs))
+        assert kwargs["tools"] == [] and kwargs["thinking"] is False
+        assert kwargs["max_tokens"] == 256
+        return ChatResult("你好，有什么想讨论的？", [], "stop")
+
+    async def stream_chat(messages, **kwargs):
+        result = await chat(messages, **kwargs)
+        yield StreamEvent("delta", text=result.content)
+        yield StreamEvent("done", finish_reason="stop")
+
+    async def run():
+        events = [e async for e in iterate_agent(SimpleNamespace(chat=chat, stream_chat=stream_chat),
+                  ToolRegistry([DoubleTool()]), [ModelMessage("user", "你好")], streaming=streaming, simple=True)]
+        assert events[-1] == ("done", {"text": "你好，有什么想讨论的？"})
+        assert len(calls) == 1
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("streaming", [True, False])

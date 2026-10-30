@@ -1,6 +1,6 @@
 [project]
 name = "xiaoyi-a2a-stat-tutor"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local POC for a Xiaoyi A2A statistical learning tutor."
 requires-python = ">=3.11"
 dependencies = [

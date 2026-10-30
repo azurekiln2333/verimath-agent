@@ -75,3 +75,40 @@ def test_truncated_model_stream_is_not_marked_completed(monkeypatch):
         finally:
             await client.aclose()
     asyncio.run(run())
+
+
+def test_chat_overrides_thinking_and_output_budget_without_changing_defaults(monkeypatch):
+    import asyncio
+    import json
+    import httpx
+    from app.model_client import ModelMessage
+
+    bodies = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body["stream"]:
+            return httpx.Response(200, text='data: {"choices":[{"delta":{"content":"你好"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+        return httpx.Response(200, json={"choices": [{"message": {"content": "你好"}, "finish_reason": "stop"}]})
+
+    monkeypatch.setattr(httpx, "AsyncHTTPTransport", lambda **kwargs: httpx.MockTransport(handle))
+
+    async def run():
+        config = Settings(model_enabled=True, model_api_key="fixture", model_thinking=True,
+                          model_max_output_tokens=8192)
+        client = OpenAICompatibleClient(config)
+        await client.start()
+        try:
+            await client.chat([ModelMessage("user", "你好")], thinking=False, max_tokens=256)
+            events = [e async for e in client.stream_chat([ModelMessage("user", "你好")], thinking=False, max_tokens=256)]
+            assert events[0].text == "你好"
+            assert config.model_thinking and config.model_max_output_tokens == 8192
+        finally:
+            await client.aclose()
+        assert len(bodies) == 2
+        for body in bodies:
+            assert body["thinking"] == {"type": "disabled"} and body["max_tokens"] == 256
+            assert "reasoning_effort" not in body and "tools" not in body
+
+    asyncio.run(run())

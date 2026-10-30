@@ -36,7 +36,7 @@ CNB 设为公开后，可修改 `VERIMATH_IMAGE` 切换镜像源。
 
 ## 服务器首次部署
 
-服务器需要 Docker Engine 和 Compose 插件。
+服务器需要 Docker Engine 和 Docker Compose 2.24 或更新版本。
 2 核 2GB 可用于小规模使用。保持一个应用进程。
 当前流水线发布 `linux/amd64` 镜像，适用于 x86_64 服务器。
 
@@ -52,23 +52,24 @@ CNB 仓库也需要设为公开，才能按下述方式免登录下载与拉取�
 /opt/verimath-agent/
 ├── docker-compose.yml
 ├── .env.docker.example
-├── .env.docker
+├── .env
 └── data/                  # 首次启动后创建
 ```
 
 公开仓库可以这样下载配置。
 私有仓库应先登录仓库，或直接复制文件。
+以下复制示例配置的操作仅用于首次部署，已有配置时不要覆盖。
 
 ```bash
 mkdir -p /opt/verimath-agent
 cd /opt/verimath-agent
 curl -fL https://raw.githubusercontent.com/azurekiln2333/verimath-agent/main/docker-compose.yml -o docker-compose.yml
 curl -fL https://raw.githubusercontent.com/azurekiln2333/verimath-agent/main/.env.docker.example -o .env.docker.example
-cp .env.docker.example .env.docker
-nano .env.docker
+cp .env.docker.example .env
+nano .env
 ```
 
-已有 `.env.docker` 时，保留原文件。
+已有 `.env` 时，保留原文件。
 至少填写以下模型配置。
 
 ```dotenv
@@ -86,10 +87,10 @@ MODEL_API_KEY=有效密钥
 启动应用与自动更新服务。
 
 ```bash
-docker compose --env-file .env.docker pull
-docker compose --env-file .env.docker up -d --no-build
-docker compose --env-file .env.docker ps
-docker compose --env-file .env.docker logs --tail=100 xiaoyi
+docker compose pull
+docker compose up -d --no-build
+docker compose ps
+docker compose logs --tail=100 xiaoyi
 curl http://127.0.0.1:8765/healthz
 ```
 
@@ -107,6 +108,40 @@ curl http://127.0.0.1:8765/healthz
 公网反向代理应对全部路径设置访问鉴权。
 仅打开 A2A 签名开关，不能保护面板 API。
 
+## 环境文件与模型诊断
+
+默认把服务器配置保存为与 `docker-compose.yml` 同目录的 `.env`。
+Compose 会把它用于镜像、端口和 Watchtower 配置，并把模型变量传入应用容器。
+旧的 `.env.docker` 仍受支持，原来的启动命令可以继续使用：
+
+```bash
+docker compose --env-file .env.docker up -d --no-build
+```
+
+仅有旧文件时，可把 `.env.docker` 重命名为 `.env`，以后省略 `--env-file`。
+两者同时存在时，容器中的同名变量优先使用 `.env`；建议只维护一个配置文件。
+源代码运行时的 Windows 语料路径不能直接用于 Linux 容器。
+容器默认语料路径为 `CORPUS_WHITELIST=/corpus`，数据路径固定为 `/data`。
+
+下面的命令在应用容器内检查实际生效的配置、鉴权和流式响应，最多等待 25 秒。
+只显示模型名称、接口主机、密钥是否存在、耗时和错误类型，不输出密钥或上游响应正文。
+
+```bash
+docker compose exec -T xiaoyi python -m scripts.check_model
+```
+
+- `authentication_failed` / HTTP 401：检查密钥是否有效，以及密钥是否属于该接口。
+- `access_denied` / HTTP 403：检查模型权限与接口访问限制。
+- `model_not_found` / HTTP 404：检查接口地址与模型名称。
+- `rate_limited` / HTTP 429：检查额度和请求限制。
+- `timeout` / `connection_error`：检查服务器到模型接口的网络与代理。
+
+默认数学请求保留深度思考。追求低延迟时，可在 `.env` 中设置 `MODEL_THINKING=false`。
+独立的“你好”“谢谢”等寒暄会使用简短模型请求，关闭思考和工具调用，最多等待 30 秒。
+实际学习问题仍保留原来的工具计算和知识检索能力。
+模型失败时，界面和服务端日志会显示对应错误原因；聊天问题及已生成内容会被保留。
+修改配置后执行 `docker compose up -d --no-build`，让容器重新加载环境。
+
 ## Watchtower 自动更新
 
 默认跟随 `VERIMATH_IMAGE` 指定的镜像标签。
@@ -123,7 +158,7 @@ Watchtower 自身不参与自动更新。
 清理选项只删除被替换的镜像。
 它不会删除宿主机的 `data/`。
 
-可在 `.env.docker` 中调整检查间隔。
+可在 `.env` 中调整检查间隔。
 
 ```dotenv
 WATCHTOWER_POLL_INTERVAL=600
@@ -132,8 +167,8 @@ WATCHTOWER_POLL_INTERVAL=600
 查看自动更新日志或暂停自动更新。
 
 ```bash
-docker compose --env-file .env.docker logs --tail=100 watchtower
-docker compose --env-file .env.docker stop watchtower
+docker compose logs --tail=100 watchtower
+docker compose stop watchtower
 ```
 
 再次运行 `up -d` 可恢复 Watchtower。
@@ -145,7 +180,7 @@ Watchtower 沿用容器原有配置。
 修改密钥、端口、挂载或环境变量后，执行以下命令。
 
 ```bash
-docker compose --env-file .env.docker up -d --no-build
+docker compose up -d --no-build
 ```
 
 ## 私有镜像的拉取凭据
@@ -159,7 +194,7 @@ mkdir -p registry-auth
 docker --config ./registry-auth login docker.cnb.cool --username cnb
 ```
 
-在 `.env.docker` 中追加以下配置。
+在 `.env` 中追加以下配置。
 
 ```dotenv
 REGISTRY_AUTH_FILE=./registry-auth/config.json
@@ -168,8 +203,8 @@ REGISTRY_AUTH_FILE=./registry-auth/config.json
 拉取并启动。文件路径以主 Compose 文件为基准。
 
 ```bash
-docker --config ./registry-auth compose --env-file .env.docker -f docker-compose.yml -f deploy/docker-compose.private.yml pull
-docker --config ./registry-auth compose --env-file .env.docker -f docker-compose.yml -f deploy/docker-compose.private.yml up -d --no-build
+docker --config ./registry-auth compose -f docker-compose.yml -f deploy/docker-compose.private.yml pull
+docker --config ./registry-auth compose -f docker-compose.yml -f deploy/docker-compose.private.yml up -d --no-build
 ```
 
 此配置把专用认证文件只读挂载给 Watchtower。
@@ -185,7 +220,7 @@ docker --config ./registry-auth compose --env-file .env.docker -f docker-compose
 
 默认使用镜像内的 `/corpus`。
 可额外使用 `deploy/docker-compose.corpus.yml`。
-在 `.env.docker` 中设置 `VERIMATH_CORPUS_DIR`。
+在 `.env` 中设置 `VERIMATH_CORPUS_DIR`。
 此路径会只读挂载到 `/corpus`。
 
 ```dotenv
@@ -193,7 +228,7 @@ VERIMATH_CORPUS_DIR=./corpus
 ```
 
 ```bash
-docker compose --env-file .env.docker -f docker-compose.yml -f deploy/docker-compose.corpus.yml up -d --no-build
+docker compose -f docker-compose.yml -f deploy/docker-compose.corpus.yml up -d --no-build
 ```
 
 已有索引不会在镜像更新时被自动替换。
@@ -202,7 +237,7 @@ docker compose --env-file .env.docker -f docker-compose.yml -f deploy/docker-com
 先备份数据，再执行。
 
 ```bash
-docker compose --env-file .env.docker exec xiaoyi python -m scripts.build_corpus
+docker compose exec xiaoyi python -m scripts.build_corpus
 ```
 
 ## 迁移旧数据与回退
@@ -215,9 +250,9 @@ SQLite 的 WAL 文件也要一起保留。
 升级前可停止应用并备份配置与数据。
 
 ```bash
-docker compose --env-file .env.docker stop xiaoyi
-tar -czf verimath-backup.tar.gz data .env.docker
-docker compose --env-file .env.docker up -d --no-build
+docker compose stop xiaoyi
+tar -czf verimath-backup.tar.gz data .env
+docker compose up -d --no-build
 ```
 
 回退时，把 `VERIMATH_IMAGE` 改为旧版本标签。
@@ -231,7 +266,7 @@ docker compose --env-file .env.docker up -d --no-build
 Watchtower 也不会默认启动。
 
 ```bash
-docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.build.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 ## 发布新版本
@@ -240,9 +275,9 @@ docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.bu
 完成测试并提交代码，再创建匹配的标签。
 
 ```bash
-git tag v0.1.0
-git push origin main v0.1.0
-git push cnb main v0.1.0
+git tag v0.1.1
+git push origin main v0.1.1
+git push cnb main v0.1.1
 ```
 
 GitHub 使用 `.github/workflows/build-and-release.yml`。
@@ -251,6 +286,6 @@ CNB 使用 `.cnb.yml`，由平台提供构建令牌。
 服务器默认从已经公开的 GHCR 拉取。
 
 不要把模型密钥配置到构建变量中。
-模型密钥只保存在服务器的 `.env.docker`。
+模型密钥只保存在服务器的 `.env`。
 `.dockerignore` 只放行运行代码与整理后的语料。
 本地环境、聊天数据库和原始 PDF 不会进入镜像。

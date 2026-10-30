@@ -19,7 +19,7 @@ COPY corpus/curated/public_main/ /corpus/
 RUN mkdir -p /corpus /data
 
 ARG VCS_REF=unknown
-ARG VERSION=0.1.0
+ARG VERSION=0.1.1
 LABEL org.opencontainers.image.title="VeriMath Agent" \
       org.opencontainers.image.source="https://github.com/azurekiln2333/verimath-agent" \
       org.opencontainers.image.version=$VERSION \

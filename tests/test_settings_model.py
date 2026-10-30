@@ -41,3 +41,9 @@ def test_load_local_env_does_not_override_existing_env(tmp_path, monkeypatch):
     assert Settings().model_enabled is True
     assert Settings().model_name == "from-shell"
     assert Settings().model_api_key == "from-file"
+
+
+def test_blank_primary_key_keeps_deepseek_alias_available(monkeypatch):
+    monkeypatch.setenv("MODEL_API_KEY", "")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "alias-key")
+    assert Settings().model_api_key == "alias-key"

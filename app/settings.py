@@ -42,7 +42,7 @@ load_local_env()
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "xiaoyi-a2a-stat-tutor"
-    app_version: str = "0.1.0"
+    app_version: str = "0.1.1"
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", ".data")))
     corpus_paths: tuple[Path, ...] = field(
         default_factory=lambda: tuple(_split_paths(os.getenv("CORPUS_WHITELIST")))
@@ -57,7 +57,7 @@ class Settings:
         default_factory=lambda: os.getenv("MODEL_API_BASE", "https://api.deepseek.com")
     )
     model_api_key: str = field(
-        default_factory=lambda: os.getenv("MODEL_API_KEY", os.getenv("DEEPSEEK_API_KEY", ""))
+        default_factory=lambda: (os.getenv("MODEL_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")).strip()
     )
     model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "deepseek-v4-flash"))
     # 可独立指定视觉模型；留空时复用已验证支持图片的聊天模型与同一 API。

@@ -1,14 +1,18 @@
 name: verimath-agent
 
 # Production pulls a published image. Local builds use docker-compose.build.yml.
-# Run: docker compose --env-file .env.docker up -d --pull always
+# Requires Docker Compose >= 2.24. Run: docker compose up -d --pull always
 services:
   xiaoyi:
     image: "${VERIMATH_IMAGE:-ghcr.io/azurekiln2333/verimath-agent:latest}"
     restart: unless-stopped
     init: true
     env_file:
-      - .env.docker
+      # Keep existing deployments working; .env wins when both files exist.
+      - path: .env.docker
+        required: false
+      - path: .env
+        required: false
     environment:
       DATA_DIR: /data
     ports:

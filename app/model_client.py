@@ -215,13 +215,17 @@ class OpenAICompatibleClient:
         messages: list[ModelMessage],
         tools: list[dict] | None = None,
         tool_choice: str = "auto",
+        thinking: bool | None = None,
+        max_tokens: int | None = None,
     ) -> ChatResult:
         """非流式工具调用。SDK/API 已把 tool_calls.arguments 拼成完整 JSON 字符串，
         这里直接 json.loads。最稳的工具调用路径，stream_chat 不可靠时的回退。"""
         if not self.enabled:
             raise RuntimeError("MODEL_ENABLED, MODEL_API_BASE, and MODEL_API_KEY are not configured")
         url = self.settings.model_api_base.rstrip("/") + "/chat/completions"
-        payload = self._base_payload()
+        payload = self._base_payload(thinking=thinking)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         payload.update({
             "messages": [m.to_dict() for m in messages],
             "stream": False,
@@ -258,6 +262,8 @@ class OpenAICompatibleClient:
         messages: list[ModelMessage],
         tools: list[dict] | None = None,
         tool_choice: str = "auto",
+        thinking: bool | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """流式工具调用：思考链(reasoning_content)逐段 yield("thinking")；
         文本逐 token yield("delta")；流结束时若模型要调工具，
@@ -273,7 +279,9 @@ class OpenAICompatibleClient:
         if not self.enabled:
             raise RuntimeError("MODEL_ENABLED, MODEL_API_BASE, and MODEL_API_KEY are not configured")
         url = self.settings.model_api_base.rstrip("/") + "/chat/completions"
-        payload = self._base_payload()
+        payload = self._base_payload(thinking=thinking)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         payload.update({
             "messages": [m.to_dict() for m in messages],
             "stream": True,

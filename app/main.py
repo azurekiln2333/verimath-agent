@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from app.agent_runtime import iterate_agent
+from app.agent_runtime import is_smalltalk, iterate_agent
 from app.agents import TutorRouter
 from app.agents.artifact_agent import generate_spec as generate_tier2_spec
 from app.agents.router import AgentResponse
@@ -40,6 +40,7 @@ from app.verify import StepVerifierError, check_steps
 from app.logging_store import InteractionLogger
 from app.learning_store import LearningStore
 from app.model_client import ModelMessage, OpenAICompatibleClient
+from app.model_errors import ModelRequestError, describe_model_error, model_error_hint
 from app.panel_html import PANEL_HTML
 from app.protocol import (
     CLEAR_CONTEXT_METHODS,
@@ -984,6 +985,9 @@ def build_agent_messages(
     与 build_model_messages 共用来源/引用/风格逻辑，但 system 多了「工具能力」段，
     明确告诉模型可以且应当主动调用工具，并说明组件以按钮形式呈现（不要在文字里硬画）。
     """
+    if is_smalltalk(query):
+        return [ModelMessage("system", "你是 VeriMath Agent，数学与统计学习助手。请用一两句话自然回应本轮寒暄，不展开教学内容。"),
+                *(history or []), ModelMessage("user", query)]
     source_text = format_sources_for_prompt(response.sources)
     style_instruction = answer_style_instruction(answer_style)
     cite_rule = citation_instruction(response.sources)
@@ -1059,12 +1063,13 @@ async def run_agent_loop_stream(
     task_id: str,
     max_iterations: int = 6,
     sources: list[dict] | None = None,
+    simple: bool = False,
 ) -> AsyncIterator[tuple[str, dict]]:
     """Keep the SSE contract while sharing the bounded model/tool executor."""
     async for event in iterate_agent(
         model_client, registry, seed_messages, streaming=True,
         max_iterations=max_iterations, timeout=settings.agent_timeout_seconds,
-        sources=sources,
+        sources=sources, simple=simple,
         cancelled=lambda: sessions.is_cancelled(session_id, task_id),
     ):
         yield event
@@ -1131,11 +1136,12 @@ async def _panel_stream_events(payload: PanelChatRequest) -> AsyncIterator[str]:
         # Agent 循环：模型可调用工具（绘图/出题/查库/生成HTML组件），工具产出走 artifact_offer。
         final_text = ""
         trace.checkpoint("answering", {"route": skeleton.route, "mode": "agent"})
-        mspan = trace.start_tool_run("agent_loop", {"tools": tool_registry.names()})
+        mspan = trace.start_tool_run("agent_loop", {"tools": [] if is_smalltalk(query) else panel_tool_registry.names()})
         try:
             seed = build_agent_messages(query, skeleton, style, history, profile_text, coach_text)
             async for ev_name, ev_data in run_agent_loop_stream(
-                seed, panel_tool_registry, session_id, task_id, max_iterations=6, sources=skeleton.sources
+                seed, panel_tool_registry, session_id, task_id, max_iterations=6, sources=skeleton.sources,
+                simple=is_smalltalk(query),
             ):
                 if ev_name == "delta":
                     final_text += ev_data["text"]
@@ -1170,7 +1176,7 @@ async def _panel_stream_events(payload: PanelChatRequest) -> AsyncIterator[str]:
                     loop_cancelled = True
                     break
                 elif ev_name == "error":
-                    raise RuntimeError(ev_data.get("message", "agent loop error"))
+                    raise ModelRequestError(ev_data)
             trace.finish_tool_run(mspan, status="ok", output={"chars": len(final_text)})
             skeleton = replace(skeleton, requires_clarification=False,
                                flags={**skeleton.flags, "model_used": True,
@@ -1182,20 +1188,24 @@ async def _panel_stream_events(payload: PanelChatRequest) -> AsyncIterator[str]:
                                                 "agent_loop": True, "cancelled": True})
         except Exception as exc:
             # Preserve emitted text; restarting could repeat text and tool side effects.
-            trace.finish_tool_run(mspan, status="error", error_type=type(exc).__name__)
+            failure = describe_model_error(exc)
+            trace.finish_tool_run(mspan, status="error", error_type=failure["error_type"])
+            trace.event("model_error", failure)
             had_text = bool(final_text)
             if had_text:
-                note = "\n\n> 本次生成已中断，以上为已生成的部分内容。请重试或继续提问。"
+                note = "\n\n> 本次生成已中断，以上为已生成的部分内容。" + failure["user_message"]
                 final_text += note
                 yield sse_event("delta", {"text": note})
             else:
-                final_text = (skeleton.text + "\n\n> 模型暂时不可用，以上为本地计算结果。"
+                final_text = (skeleton.text + "\n\n> 模型暂时不可用，以上为本地计算结果。" + failure["user_message"]
                               if skeleton.flags.get("offline_kernel") else
-                              "模型暂时未能完成本轮回答，请稍后重试。你的问题已保留。")
+                              "模型暂时未能完成本轮回答：" + failure["user_message"] + "你的问题已保留。")
                 yield sse_event("delta", {"text": final_text})
             skeleton = replace(skeleton, flags={**skeleton.flags, "model_used": had_text,
                                                 "agent_loop": True, "model_incomplete": True,
-                                                "model_error": type(exc).__name__})
+                                                "model_error": failure["code"],
+                                                "model_error_type": failure["error_type"],
+                                                "model_http_status": failure["http_status"]})
         # Agent 没产出任何文本（罕见，如模型直接 done 空内容）→ 回退骨架
         if not loop_cancelled and not final_text:
             final_text = skeleton.text
@@ -1316,6 +1326,7 @@ async def _panel_stream(payload: PanelChatRequest) -> AsyncIterator[str]:
                     offers = artifact_service.collect_offers(session_id, message_id, content,
                                                               data.get("route", "concept"), proposals)
                     if (data.get("flags", {}).get("model_used") and data.get("route") != "guard"
+                            and not is_smalltalk(payload.query)
                             and not data.get("requires_clarification")):
                         artifact_service.discover(session_id, message_id)
                 stored = panel_store.message(session_id, message_id)
@@ -1513,11 +1524,12 @@ async def _agent_answer(
             query, response, normalize_answer_style(answer_style), history, profile_text
         )
         sources = list(response.sources)
-        text, artifacts, model_error = await run_agent_loop(seed, tool_registry, source_sink=sources)
+        text, artifacts, model_error = await run_agent_loop(seed, tool_registry, source_sink=sources,
+                                                          simple=is_smalltalk(query))
         fill_fallback_cards(sources)
         response = replace(response, sources=sources)
     except Exception as exc:
-        text, artifacts, model_error = "", [], type(exc).__name__
+        text, artifacts, model_error = "", [], describe_model_error(exc)["code"]
     flags = dict(response.flags)
     if text:
         flags["model_used"] = True
@@ -1529,6 +1541,12 @@ async def _agent_answer(
     flags["model_used"] = False
     if model_error:
         flags["model_error"] = model_error
+        flags["model_incomplete"] = True
+        hint = model_error_hint(model_error)
+        text = (response.text + "\n\n> 模型暂时不可用，以上为本地计算结果。" + hint
+                if flags.get("offline_kernel") else
+                "模型暂时未能完成本轮回答：" + hint + "你的问题已保留。")
+        return replace(response, text=text, flags=flags)
     return replace(response, flags=flags)
 
 
@@ -1536,7 +1554,7 @@ async def run_agent_loop(
     seed_messages: list[ModelMessage],
     registry,
     max_iterations: int = 6,
-    *, source_sink: list[dict] | None = None,
+    *, source_sink: list[dict] | None = None, simple: bool = False,
 ) -> tuple[str, list[dict[str, Any]], str | None]:
     """Compatibility adapter for the non-streaming panel and A2A callers."""
     text = ""
@@ -1545,7 +1563,7 @@ async def run_agent_loop(
     async for name, data in iterate_agent(
         model_client, registry, seed_messages, streaming=False,
         max_iterations=max_iterations, timeout=settings.agent_timeout_seconds,
-        sources=source_sink,
+        sources=source_sink, simple=simple,
     ):
         if name == "delta":
             text += data["text"]
@@ -1556,7 +1574,7 @@ async def run_agent_loop(
         elif name == "max_iter":
             error = "max_iterations"
         elif name == "error":
-            error = data.get("message", "execution_error")
+            error = data.get("code", "execution_error")
     return text.strip(), artifacts, error
 
 

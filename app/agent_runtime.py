@@ -3,31 +3,43 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from contextlib import aclosing
 from collections.abc import AsyncIterator, Callable
 
 from app.model_client import ModelMessage, StreamEvent
+from app.model_errors import describe_model_error
 from app.rag.sources import SourceLedger
+
+
+def is_smalltalk(query: str) -> bool:
+    """Match standalone greetings only; a greeting followed by a task stays an agent request."""
+    text = re.sub(r"[\s!！。.,，?？~～、]+", "", query).casefold()
+    return text in {"你好", "您好", "你好呀", "你好啊", "嗨", "哈喽", "在吗", "早上好", "晚上好",
+                    "早安", "晚安", "谢谢", "多谢", "再见", "hi", "hello", "hey", "thanks", "thankyou", "bye"}
 
 
 async def iterate_agent(client, registry, seed: list[ModelMessage], *, streaming: bool,
                         max_iterations: int = 6, timeout: float = 180,
+                        simple: bool = False,
                         sources: list[dict] | None = None,
                         cancelled: Callable[[], bool] = lambda: False) -> AsyncIterator[tuple[str, dict]]:
     messages = list(seed)
     ledger = SourceLedger(sources)
-    schema = registry.to_openai_schema()
+    schema = [] if simple else registry.to_openai_schema()
+    options = {"thinking": False, "max_tokens": 256} if simple else {}
     text = ""
     try:
-        async with asyncio.timeout(timeout):
-            for _ in range(max_iterations):
+        async with asyncio.timeout(min(timeout, 30) if simple else timeout):
+            for _ in range(1 if simple else max_iterations):
                 if cancelled():
                     yield "cancelled", {}
                     return
                 turn_text, reasoning = "", ""
                 calls = None
                 finished = False
-                async with aclosing(_turn(client, messages, schema, streaming)) as events:
+                async with aclosing(_turn(client, messages, schema, streaming, options)) as events:
                     while True:
                         try:
                             event = await _await_active(anext(events), cancelled)
@@ -71,19 +83,20 @@ async def iterate_agent(client, registry, seed: list[ModelMessage], *, streaming
             yield "max_iter", {"text": text}
     except _UserCancelled:
         yield "cancelled", {}
-    except TimeoutError:
-        yield "error", {"message": "agent_timeout", "code": "timeout"}
     except Exception as exc:
-        yield "error", {"message": type(exc).__name__, "code": "execution_error"}
+        details = describe_model_error(exc)
+        logging.getLogger(__name__).warning("Model call failed: code=%s type=%s http_status=%s",
+                                           details["code"], details["error_type"], details["http_status"])
+        yield "error", details
 
 
-async def _turn(client, messages, schema, streaming):
+async def _turn(client, messages, schema, streaming, options):
     if streaming:
-        async with aclosing(client.stream_chat(messages, tools=schema, tool_choice="auto")) as events:
+        async with aclosing(client.stream_chat(messages, tools=schema, tool_choice="auto", **options)) as events:
             async for event in events:
                 yield event
     else:
-        result = await client.chat(messages, tools=schema, tool_choice="auto")
+        result = await client.chat(messages, tools=schema, tool_choice="auto", **options)
         if result.reasoning_content:
             yield StreamEvent("thinking", text=result.reasoning_content)
         if result.content:

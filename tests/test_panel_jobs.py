@@ -312,6 +312,65 @@ def test_model_unavailable_does_not_pass_generic_offline_text_off_as_a_solution(
     asyncio.run(run())
 
 
+def test_greeting_keeps_model_response_and_skips_background_model_suggestions(isolated, monkeypatch):
+    store, service = isolated
+    calls = []
+
+    async def stream_chat(messages, **kwargs):
+        calls.append(kwargs)
+        assert kwargs["thinking"] is False and kwargs["tools"] == []
+        assert messages[-1].content == "你好"
+        assert "工具能力" not in messages[0].content
+        yield StreamEvent("delta", text="你好！有什么想学习的？")
+        yield StreamEvent("done", finish_reason="stop")
+
+    discover = AsyncMock()
+    monkeypatch.setattr(service, "discover", discover)
+    monkeypatch.setattr(main, "model_client", SimpleNamespace(enabled=True, stream_chat=stream_chat))
+
+    async def run():
+        frames = [f async for f in main._panel_stream(main.PanelChatRequest(
+            query="你好", session_id="greeting", use_model=True))]
+        final = next(json.loads(f.split("data: ", 1)[1]) for f in frames if f.startswith("event: final\n"))
+        assert final["status"] == "completed" and final["content"] == "你好！有什么想学习的？"
+        assert store.message("greeting", final["message_id"])["content"] == final["content"]
+        assert len(calls) == 1
+        discover.assert_not_called()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("status,code,hint", [
+    (401, "authentication_failed", "鉴权失败"), (403, "access_denied", "拒绝访问"),
+    (404, "model_not_found", "模型或接口路径不存在"), (400, "invalid_request", "参数是否受支持"),
+    (429, "rate_limited", "额度不足"), (503, "upstream_error", "上游模型服务异常"),
+])
+def test_upstream_status_reaches_saved_answer_without_leaking_secrets(isolated, monkeypatch, status, code, hint):
+    store, _ = isolated
+
+    async def stream_chat(*args, **kwargs):
+        request = httpx.Request("POST", "https://private.invalid/v1?secret=private-key",
+                                headers={"Authorization": "Bearer private-key"})
+        raise httpx.HTTPStatusError("private-key upstream details", request=request,
+                                   response=httpx.Response(status, text="private-key", request=request))
+        yield
+
+    monkeypatch.setattr(main, "model_client", SimpleNamespace(enabled=True, stream_chat=stream_chat))
+
+    async def run():
+        frames = [f async for f in main._panel_stream(main.PanelChatRequest(
+            query="你好", session_id="upstream-failure", use_model=True))]
+        final = next(json.loads(f.split("data: ", 1)[1]) for f in frames if f.startswith("event: final\n"))
+        assert final["status"] == "interrupted" and hint in final["content"]
+        assert final["flags"]["model_error"] == code
+        assert final["flags"]["model_http_status"] == status
+        assert final["flags"]["model_error_type"] == "HTTPStatusError"
+        assert "private-key" not in "".join(frames) and "private.invalid" not in "".join(frames)
+        assert store.message("upstream-failure", final["message_id"])["content"] == final["content"]
+
+    asyncio.run(run())
+
+
 def test_slow_canvas_does_not_block_next_chat_or_change_ownership(isolated, monkeypatch):
     store, service = isolated
 
